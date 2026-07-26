@@ -84,11 +84,36 @@ _HEDGE = re.compile(
     re.IGNORECASE,
 )
 
+# Fillers people emit while thinking. Not a turn — wait, do not answer.
+_FILLER = re.compile(
+    # ् (virama) must be allowed inside — "हम्म" is ह+म+्+म, so a plain
+    # म+ repetition never matches it.
+    r"^\s*(uh+|um+|hmm+|hm+|er+|ah+|uhh+|"
+    r"[अआ]+|ह[म््]+|हूँ|हम्म|अच्छा|मतलब|वो|ঠিক|えー)[\s.,…।]*$",
+    re.IGNORECASE,
+)
+
 _NEGATIVE = re.compile(
     r"\bno\b|\bnot\b|\bnahi+n?\b|\bnahin\b|\bcan'?t\b|\bcannot\b|\bunavailable\b|"
     r"\bsold out\b|\bbooked\b|\bfull\b|नहीं|नही|खाली नहीं|इल्ल|இல்லை|ಇಲ್ಲ",
     re.IGNORECASE,
 )
+
+
+def _round_offer(x: int) -> int:
+    """
+    Round to a number a person would actually say out loud.
+      < 1,000   -> nearest 10
+      < 10,000  -> nearest 100
+      >= 10,000 -> nearest 500
+    """
+    if x < 1000:
+        step = 10
+    elif x < 10000:
+        step = 100
+    else:
+        step = 500
+    return int(round(x / step) * step)
 
 
 def _similar(a: str, b: str) -> float:
@@ -301,7 +326,22 @@ class ConversationDriver:
                 self._counters += 1
                 self._awaiting_counter_reply = True
                 step = (0.80, 0.88, 0.94)[self._counters - 1]
-                offer = max(self._target, int(self._best_price * step))
+                offer = _round_offer(max(self._target, int(self._best_price * step)))
+
+                # Stop haggling once the gap is trivial. It offered ₹13,395
+                # against a ₹14,500 ask and the callee said: "अरे क्या पांच
+                # पांच रुपये के लिए कर रहे हो भाई? किसने सिखाया तुमको?" He was
+                # right. Grinding someone for 3% of a rent loses the goodwill
+                # and, usually, the deal.
+                if (self._best_price - offer) / max(1, self._best_price) < 0.03:
+                    self._awaiting_counter_reply = False
+                    self._counters = 3
+                    self._deal_agreed = True
+                    return "confirm", (
+                        f"They are at {self._best_price} and that is close enough — "
+                        f"do NOT haggle further. Accept warmly, read the deal back in "
+                        f"ONE sentence, and ask them to confirm."
+                    )
                 # A CONCESSION LADDER GOES UP, NOT DOWN.
                 #
                 # I previously clamped offers to never increase. That is
@@ -439,6 +479,13 @@ class ConversationDriver:
         except asyncio.CancelledError:
             return
         utterance = " ".join(self._pending).strip()
+        # They are mid-thought. Give them room instead of taking the turn —
+        # a hesitation before a number is the most human thing on a call.
+        if _FILLER.match(utterance):
+            logger.info(f"[{self._state.call_id}] filler {utterance!r} — waiting, not answering")
+            self._pending.clear()
+            self._timer = asyncio.create_task(self._after_pause(task))
+            return
         self._pending.clear()
         if utterance:
             self._reply = asyncio.create_task(self._respond(utterance, task))
@@ -699,7 +746,13 @@ class ConversationDriver:
                 if o["key"] not in self._slots:
                     self._asks[o["key"]] = MAX_ASKS_PER_OBJECTIVE
                     break
-            if self._stall >= 2:
+            # Do not end the call while something required is still missing.
+            # We hung up on someone one beat before they said their price.
+            missing_required = any(
+                o.get("required") and o["key"] not in self._slots
+                for o in self._objectives
+            )
+            if self._stall >= 3 and not missing_required:
                 await self._close(task)
             return
         self._last_sig = sig
