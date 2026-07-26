@@ -48,7 +48,7 @@ MAX_TURNS = int(os.getenv("MAX_TURNS", "16"))
 # pauses run long, especially when someone is checking a register.
 SILENCE_NUDGE_SECS = float(os.getenv("SILENCE_NUDGE_SECS", "14"))
 # Ask any one objective at most this many times, then accept it is unanswerable.
-MAX_ASKS_PER_OBJECTIVE = 2
+MAX_ASKS_PER_OBJECTIVE = 3
 
 NUDGE = {
     "hi-IN": "हैलो, आप सुन रहे हैं?",
@@ -97,6 +97,8 @@ class ConversationDriver:
         # itself with the callee never having spoken.
         self._awaiting_counter_reply = False
         self._confirmed = False
+        self._pending_ask: str | None = None
+        self._last_offer: int | None = None
 
         self._pending: list[str] = []
         self._timer: asyncio.Task | None = None
@@ -166,8 +168,8 @@ class ConversationDriver:
             k = o["key"]
             if k in self._slots or self._asks[k] >= MAX_ASKS_PER_OBJECTIVE:
                 continue
-            self._asks[k] += 1
-            if self._asks[k] == 1:
+            self._pending_ask = k  # counted in _respond, only once we SPEAK it
+            if self._asks[k] == 0:
                 return "ask", f"Ask this, in your own natural words: {o['ask']}"
             return "ask", (
                 f"They did not answer clearly. Ask MUCH more simply, in different "
@@ -185,6 +187,7 @@ class ConversationDriver:
                 self._awaiting_counter_reply = True
                 step = (0.80, 0.88, 0.94)[self._counters - 1]
                 offer = max(self._target, int(self._best_price * step))
+                self._last_offer = offer
                 # NEVER bid above something they have already offered. The
                 # ladder is computed off their quote, so once they concede the
                 # next rung can land higher than their own latest number —
@@ -271,10 +274,26 @@ class ConversationDriver:
         # They confirmed the read-back. We have what we came for — say thanks
         # and hang up. Without this the agent kept re-confirming while the
         # callee answered "Yes" four times over 112 seconds.
-        if self._confirmed and self._is_affirmative(utterance):
+        missing = [
+            o for o in self._objectives
+            if o.get("required") and o["key"] not in self._slots
+        ]
+        if self._confirmed and self._is_affirmative(utterance) and not missing:
             logger.info(f"[{self._state.call_id}] deal confirmed — closing")
             await self._close(task)
             return
+        if self._confirmed and missing:
+            # They said yes, but to something else — we still do not have what
+            # we came for. Observed live: the callee answered "Yes, it is"
+            # about the ROOM, we read it as agreeing the whole deal, and hung
+            # up before they could ever state a price.
+            logger.info(
+                f"[{self._state.call_id}] 'yes' but still missing "
+                f"{[o['key'] for o in missing]} — not closing"
+            )
+            self._confirmed = False
+            for o in missing:
+                self._asks[o["key"]] = 0  # give it another honest attempt
         self._turns += 1
         if self._turns > MAX_TURNS:
             await self._close(task)
@@ -380,10 +399,21 @@ class ConversationDriver:
             if self._stall >= 3:
                 await self._close(task)
                 return
-            reply = {
-                "hi-IN": "ठीक है जी, समझ गया।",
-                "en-IN": "Alright, understood.",
-            }.get(self._reply_lang, "Alright, understood.")
+            # Do NOT emit a canned "Alright, understood." — four of those in one
+            # call was itself the repetition the callee complained about. Having
+            # burned the stuck objective above, ask again for the ADVANCED goal
+            # and say something genuinely new.
+            _, advanced = self._next_goal()
+            try:
+                _, reply2 = await self._complete(
+                    advanced + " Your last sentence was ignored — say something DIFFERENT."
+                )
+            except Exception:  # noqa: BLE001
+                reply2 = ""
+            if not reply2 or _similar(reply2, last_agent) > 0.7:
+                await self._close(task)
+                return
+            reply = reply2
         else:
             self._stall = 0
 
@@ -395,6 +425,17 @@ class ConversationDriver:
         self._state.turn_seq += 1
         await self._say(task, reply)
         self._last_activity = time.monotonic()
+
+        # They accepted our counter-offer. Bank it — previously the agent won
+        # 5280, heard "Yes", and then confirmed the original 6000 because the
+        # accepted figure was never written back.
+        if goal_kind == "counter" and self._last_offer and self._is_affirmative(utterance):
+            logger.info(f"[{self._state.call_id}] counter accepted at {self._last_offer}")
+            self._best_price = self._last_offer
+            for o in self._objectives:
+                if o.get("type") == "money":
+                    self._slots[o["key"]] = self._last_offer
+            self._counters = 3  # done haggling, go and confirm
 
         # A number just landed. Phone-band audio mangles digits badly - "6000"
         # came back as 86000, as 0, and as nothing across separate calls. Read
