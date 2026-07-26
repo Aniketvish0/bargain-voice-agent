@@ -4,7 +4,25 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { CallBoard } from "./CallBoard";
 import { Mic, Phone, Text } from "./Icons";
-import type { Msg } from "./thread";
+
+/**
+ * One line of the conversation. `surface` is what makes the Telegram bot and
+ * the console visibly ONE thread rather than two apps over one database: a
+ * mission you started by voice note on your phone shows up here, badged, in
+ * order, next to what you typed in the browser.
+ */
+export type Msg = {
+  id: string;
+  role: "user" | "agent";
+  text: string;
+  surface?: "telegram" | "web";
+  at: number;
+};
+
+function SurfaceBadge({ surface }: { surface?: string }) {
+  if (surface !== "telegram") return null;
+  return <span className="lang-badge">telegram</span>;
+}
 
 const LANG_NAME: Record<string, string> = {
   "hi-IN": "Hindi",
@@ -176,12 +194,16 @@ export function Transcript({
                 <div className="lb">
                   <Text />
                   you
+                  <SurfaceBadge surface={m.surface} />
                 </div>
                 {m.text}
               </>
             ) : (
               <>
-                <div className="who">orydl</div>
+                <div className="who">
+                  orydl
+                  <SurfaceBadge surface={m.surface} />
+                </div>
                 <div className="body">{m.text}</div>
               </>
             )}
@@ -302,12 +324,16 @@ function Welcome({
                 <div className="lb">
                   <Text />
                   you
+                  <SurfaceBadge surface={m.surface} />
                 </div>
                 {m.text}
               </>
             ) : (
               <>
-                <div className="who">orydl</div>
+                <div className="who">
+                  orydl
+                  <SurfaceBadge surface={m.surface} />
+                </div>
                 <div className="body">{m.text}</div>
               </>
             )}
