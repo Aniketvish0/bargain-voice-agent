@@ -11,6 +11,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# The console's `tsc -b` follows its ../../convex imports and typechecks the
+# whole Convex tree, which needs the ROOT dependencies (convex, @types/node).
+# Without this the build dies on ~200 TS2307/TS7006 errors from convex/*.ts.
+echo "==> installing root (convex types)"
+npm ci 2>/dev/null || npm install
+
 echo "==> installing web (console)"
 npm --prefix web ci 2>/dev/null || npm --prefix web install
 
