@@ -99,6 +99,8 @@ class ConversationDriver:
         self._confirmed = False
         self._pending_ask: str | None = None
         self._last_offer: int | None = None
+        self._just_heard: dict = {}
+        self._just_asked_recently: set = set()
 
         self._pending: list[str] = []
         self._timer: asyncio.Task | None = None
@@ -131,7 +133,14 @@ class ConversationDriver:
         just heard.
         """
         if self._objectives:
-            self._asks[self._objectives[0]["key"]] = 1
+            # Fully consume it. Setting 1 left room under the cap, so the state
+            # machine asked the very same question again as its first move —
+            # the duplicate the callee noticed immediately.
+            first = self._objectives[0]["key"]
+            self._asks[first] = MAX_ASKS_PER_OBJECTIVE
+            # The greeting asked it, so their first answer is a legitimate
+            # response to it — otherwise we discard the very answer we asked for.
+            self._just_asked_recently = {first}
 
     async def on_user_text(self, text: str, task, lang_code: str | None = None) -> None:
         if self._closing:
@@ -153,6 +162,9 @@ class ConversationDriver:
             self._reply.cancel()
 
         self._timer = asyncio.create_task(self._after_pause(task))
+        # Start the watchdog only after they have spoken once. Starting it at
+        # connect meant "हैलो, आप सुन रहे हैं?" fired while the greeting was
+        # still playing.
         if self._watchdog is None:
             self._watchdog = asyncio.create_task(self._watch_silence(task))
 
@@ -187,6 +199,12 @@ class ConversationDriver:
                 self._awaiting_counter_reply = True
                 step = (0.80, 0.88, 0.94)[self._counters - 1]
                 offer = max(self._target, int(self._best_price * step))
+                # Monotonic. The ladder steps off THEIR opening quote, so
+                # without this the second rung landed above our own first
+                # offer — live, it went 4800 then 5640, bidding against
+                # itself. Never ask for more than we already asked for.
+                if self._last_offer is not None:
+                    offer = min(offer, self._last_offer)
                 self._last_offer = offer
                 # NEVER bid above something they have already offered. The
                 # ladder is computed off their quote, so once they concede the
@@ -313,11 +331,30 @@ class ConversationDriver:
 
         # Fold in anything they told us, whether or not we asked for it.
         rejected_price = False
+        self._just_heard = {}
         price_just_landed = False
         had_price = self._best_price is not None
+        affirmative = self._is_affirmative(utterance)
         for k, v in (heard or {}).items():
             if v is None or k not in self._asks:
                 continue
+
+            # UNSOLICITED BOOLEANS ARE NOISE. Asked for the price, the model
+            # also volunteered hasRoom=False — while the callee had just said
+            # "Yes, it is available". The agent then announced "so it's not
+            # available" and the whole call went sideways off one hallucinated
+            # field. Only believe a boolean for the objective we actually just
+            # asked, and never believe a False when they just said yes.
+            if isinstance(v, bool):
+                if k != self._pending_ask and k not in self._just_asked_recently:
+                    logger.info(f"[{self._state.call_id}] ignoring unsolicited {k}={v}")
+                    continue
+                if v is False and affirmative:
+                    logger.info(
+                        f"[{self._state.call_id}] model said {k}=False but they were "
+                        f"affirmative — recording True"
+                    )
+                    v = True
 
             # TYPE CHECK. The model returned pricePerNight=False — a boolean
             # for a money slot. That counted as "filled", so the agent never
@@ -357,6 +394,7 @@ class ConversationDriver:
                     continue
 
             self._slots[k] = v
+            self._just_heard[k] = v   # echoed implicitly in the next question
             if isinstance(v, (int, float)) and v > 100:
                 # Keep their BEST (lowest) offer, not the latest. They conceded
                 # 6000 -> 5000, and tracking only the latest made the next
@@ -399,21 +437,12 @@ class ConversationDriver:
             if self._stall >= 3:
                 await self._close(task)
                 return
-            # Do NOT emit a canned "Alright, understood." — four of those in one
-            # call was itself the repetition the callee complained about. Having
-            # burned the stuck objective above, ask again for the ADVANCED goal
-            # and say something genuinely new.
-            _, advanced = self._next_goal()
-            try:
-                _, reply2 = await self._complete(
-                    advanced + " Your last sentence was ignored — say something DIFFERENT."
-                )
-            except Exception:  # noqa: BLE001
-                reply2 = ""
-            if not reply2 or _similar(reply2, last_agent) > 0.7:
+            # No second utterance, no canned filler. Burn the stuck objective
+            # (done above) and let the NEXT user turn get a fresh goal. Saying
+            # anything at all here is what produced the repetition.
+            if self._stall >= 2:
                 await self._close(task)
-                return
-            reply = reply2
+            return
         else:
             self._stall = 0
 
@@ -437,47 +466,6 @@ class ConversationDriver:
                     self._slots[o["key"]] = self._last_offer
             self._counters = 3  # done haggling, go and confirm
 
-        # A number just landed. Phone-band audio mangles digits badly - "6000"
-        # came back as 86000, as 0, and as nothing across separate calls. Read
-        # it straight back before building anything on it, exactly as a person
-        # does on a bad line.
-        if price_just_landed and not rejected_price:
-            confirm_num = {
-                "hi-IN": f"{self._best_price} रुपये per night — सही सुना मैंने?",
-                "en-IN": f"{self._best_price} rupees per night — did I hear that right?",
-            }.get(self._reply_lang, f"{self._best_price} rupees per night, correct?")
-            self._messages.append({"role": "assistant", "content": confirm_num})
-            self._convex.turn(self._state.call_id, "agent", confirm_num)
-            self._state.transcript.append(
-                {"seq": self._state.turn_seq, "role": "agent", "text": confirm_num}
-            )
-            self._state.turn_seq += 1
-            await self._say(task, confirm_num)
-            self._last_activity = time.monotonic()
-            return
-
-        # Re-evaluate now that the slots are current. The goal above was
-        # computed BEFORE we knew what they just said, so the turn a price
-        # finally lands the goal is stale by exactly one step — which is why
-        # the agent used to skip straight to confirming a price it should
-        # have been haggling over.
-        follow_kind, follow_instruction = self._next_goal()
-        if follow_kind == "counter" and goal_kind != "counter":
-            try:
-                _, counter = await self._complete(follow_instruction)
-            except Exception:  # noqa: BLE001
-                counter = ""
-            if counter:
-                self._messages.append({"role": "assistant", "content": counter})
-                self._convex.turn(self._state.call_id, "agent", counter)
-                self._state.transcript.append(
-                    {"seq": self._state.turn_seq, "role": "agent", "text": counter}
-                )
-                self._state.turn_seq += 1
-                await self._say(task, counter)
-                self._last_activity = time.monotonic()
-                return
-
         # We used to close 6s after the readback, which hung up on people
         # mid-sentence. Let the silence watchdog end the call instead - it
         # already waits for a genuine pause.
@@ -491,6 +479,17 @@ class ConversationDriver:
             "role": "system",
             "content": (
                 f"YOUR NEXT MOVE: {instruction}\n"
+                + (
+                    f"ACKNOWLEDGE what they just told you inside that same sentence, "
+                    f"briefly and naturally — they said {self._just_heard}. Repeat the "
+                    f"key value back as part of your question (\"six thousand — could "
+                    f"you do...\"), NOT as a separate 'did I hear that right?'. One "
+                    f"sentence does both jobs.\n"
+                    if self._just_heard
+                    else ""
+                )
+                + f"NEVER ask them to confirm a number that YOU proposed — only ever a "
+                f"number THEY gave you.\n"
                 f"ALREADY KNOWN — never ask about these again: "
                 f"{json.dumps(self._slots, ensure_ascii=False) if self._slots else 'nothing yet'}\n"
                 f"LANGUAGE: reply in {self._reply_lang}, matching the caller.\n"
