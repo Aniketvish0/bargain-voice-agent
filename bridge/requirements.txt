@@ -1,0 +1,16 @@
+# Python 3.12 ONLY.
+# Not 3.13+: `audioop` left the stdlib there and a dependency fails deep.
+# Not <3.11: pipecat-ai requires >=3.11.
+#
+#   uv venv --python 3.12
+#   uv pip install -r requirements.txt
+#
+# NOTE: do NOT add audioop-lts. It only exists for 3.13+ and is unsatisfiable
+# on 3.12, where audioop is still in the stdlib.
+pipecat-ai[websocket,sarvam,silero]>=1.6.0
+twilio
+fastapi
+uvicorn
+python-dotenv
+loguru
+httpx
