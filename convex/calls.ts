@@ -213,23 +213,39 @@ export const reapStuck = internalMutation({
 export const dial = internalAction({
   args: { callId: v.id("calls") },
   handler: async (ctx, args) => {
-    const bridgeUrl = process.env.BRIDGE_URL;
-    const secret = process.env.BRIDGE_SECRET;
-    if (!bridgeUrl || !secret) {
+    const call = await ctx.runQuery(internal.calls.getInternal, { callId: args.callId });
+    if (!call) return;
+
+    /**
+     * Fail this call AND advance the chain.
+     *
+     * Every failure path must go through here. An early `return` that skips
+     * scheduling `afterCall` strands the mission forever: call 1 goes to
+     * "failed" and calls 2 and 3 sit at "queued" with nothing to wake them.
+     * That bug shipped once and cost a stalled demo run — do not reintroduce it.
+     */
+    const failAndAdvance = async (reason: string) => {
       await ctx.runMutation(internal.calls.patch, {
         callId: args.callId,
         status: "failed",
-        lastError: "BRIDGE_URL / BRIDGE_SECRET not configured",
+        lastError: reason.slice(0, 300),
       });
+      await ctx.scheduler.runAfter(0, internal.orchestrator.afterCall, {
+        missionId: call.missionId,
+        callId: args.callId,
+      });
+    };
+
+    const bridgeUrl = process.env.BRIDGE_URL;
+    const secret = process.env.BRIDGE_SECRET;
+    if (!bridgeUrl || !secret) {
+      await failAndAdvance("BRIDGE_URL / BRIDGE_SECRET not configured");
       return;
     }
-
-    const call = await ctx.runQuery(internal.calls.getInternal, { callId: args.callId });
-    if (!call) return;
     const mission = await ctx.runQuery(internal.missions.getInternal, {
       missionId: call.missionId,
     });
-    if (!mission || mission.status === "cancelled") return;
+    if (!mission || mission.status === "cancelled") return;  // deliberate stop, not a failure
 
     const user = await ctx.runQuery(internal.users.get, { userId: call.userId });
     const priorQuotes = await ctx.runQuery(internal.missions.priorQuotes, {
@@ -281,16 +297,8 @@ export const dial = internalAction({
         });
       }
     } catch (err: any) {
-      await ctx.runMutation(internal.calls.patch, {
-        callId: args.callId,
-        status: "failed",
-        lastError: String(err?.message ?? err).slice(0, 300),
-      });
-      // Keep the chain moving — one dead vendor must not strand the mission.
-      await ctx.scheduler.runAfter(0, internal.orchestrator.afterCall, {
-        missionId: call.missionId,
-        callId: args.callId,
-      });
+      // One dead vendor must not strand the mission.
+      await failAndAdvance(String(err?.message ?? err));
     }
   },
 });
