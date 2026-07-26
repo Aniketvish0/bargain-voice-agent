@@ -35,6 +35,8 @@ import os
 import time
 from typing import Any
 
+import re
+
 import httpx
 from loguru import logger
 
@@ -58,10 +60,32 @@ CLOSE = {
     "hi-IN": "ठीक है जी, बहुत धन्यवाद। आपका दिन शुभ हो!",
     "en-IN": "Alright, thank you so much. Have a good day!",
 }
+# Used when we declined on price. A cheerful "have a good day" straight after
+# turning someone down sounds oblivious.
+WALKAWAY_CLOSE = {
+    "hi-IN": "फिर भी आपका बहुत धन्यवाद जी, समय देने के लिए। रेट बदले तो ज़रूर बताइएगा।",
+    "en-IN": "Thank you for your time anyway. If your rate changes, do let us know.",
+}
+
+
+_NUM = re.compile(r"\d[\d,]*")
 
 
 def _similar(a: str, b: str) -> float:
-    """Cheap token overlap. Catches a reworded repeat that a == b would miss."""
+    """
+    Token overlap, but NUMBER-AWARE.
+
+    Two counter-offers share nearly every word — "could you do 5000" vs
+    "could you do 4800" scored 0.8 and got flagged as a repeat, so the agent
+    stopped negotiating and hung up mid-sentence on the callee. When the
+    figures differ, the turns are different by definition: the number IS the
+    content of a counter-offer.
+    """
+    na = set(_NUM.findall(a.replace(",", "")))
+    nb = set(_NUM.findall(b.replace(",", "")))
+    if na and nb and na != nb:
+        return 0.0
+
     ta, tb = set(a.lower().split()), set(b.lower().split())
     if not ta or not tb:
         return 0.0
@@ -102,6 +126,7 @@ class ConversationDriver:
         self._just_heard: dict = {}
         self._just_asked_recently: set = set()
         self._odd_price_seen: int | None = None
+        self._walked_away = False
 
         self._pending: list[str] = []
         self._timer: asyncio.Task | None = None
@@ -235,6 +260,27 @@ class ConversationDriver:
                     f"{offer} and you'll confirm right away. Never a bare number. "
                     f"Do NOT mention a budget, a maximum, or what you can afford.{cite}"
                 )
+
+        # 2b. Their price is far above what we can do and the ladder is spent.
+        #     Say so, honestly and warmly, instead of hanging up on them.
+        if (
+            self._mission_type == "negotiate"
+            and self._target
+            and self._best_price
+            and self._best_price > self._target * 1.25
+            and self._counters >= 3
+            and not self._walked_away  # latch: say it once, not every turn
+        ):
+            self._walked_away = True
+            return "walkaway", (
+                f"They will not go below {self._best_price}, and that is well above "
+                f"what the customer can do. Tell them so plainly and warmly in ONE or "
+                f"TWO sentences: thank them, say honestly that this is more than the "
+                f"customer's budget allows so you cannot take it forward today, and "
+                f"leave the door open in case their rate changes. Do NOT state the "
+                f"customer's budget figure. Do not sound like a machine giving up — "
+                f"sound like a person who is genuinely sorry it did not work out."
+            )
 
         # 3. Read the deal back and close.
         # Only ever read back what we ACTUALLY have. When the price slot was
@@ -447,7 +493,14 @@ class ConversationDriver:
             # No second utterance, no canned filler. Burn the stuck objective
             # (done above) and let the NEXT user turn get a fresh goal. Saying
             # anything at all here is what produced the repetition.
-            if self._stall >= 2:
+            # Three, not two — and never while the negotiation still has rungs
+            # left. We cut a callee off mid-sentence at strike two.
+            ladder_live = (
+                self._mission_type == "negotiate"
+                and self._best_price
+                and self._counters < 3
+            )
+            if self._stall >= 3 and not ladder_live:
                 await self._close(task)
             return
         else:
@@ -478,6 +531,15 @@ class ConversationDriver:
         # already waits for a genuine pause.
         if goal_kind == "confirm":
             self._confirmed = True
+
+        # We have said our piece about the price. Give them a moment to react
+        # (they often improve the offer right here), then close politely.
+        if goal_kind == "walkaway":
+            # Give them a beat to improve the offer — they often do, right
+            # here — then close. Do not restate the decline.
+            await asyncio.sleep(7.0)
+            if not self._closing:
+                await self._close(task)
 
     async def _complete(self, instruction: str) -> tuple[dict, str]:
         """One round trip: interpret what they said AND phrase the next line."""
@@ -547,7 +609,12 @@ class ConversationDriver:
         if self._closing:
             return
         self._closing = True
-        await self._say(task, CLOSE.get(self._reply_lang, CLOSE["en-IN"]))
+        line = (
+            WALKAWAY_CLOSE.get(self._reply_lang, WALKAWAY_CLOSE["en-IN"])
+            if self._walked_away
+            else CLOSE.get(self._reply_lang, CLOSE["en-IN"])
+        )
+        await self._say(task, line)
         await asyncio.sleep(3.0)
         await task.queue_frame(EndFrame())
 
