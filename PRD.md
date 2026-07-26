@@ -1,0 +1,1593 @@
+# MOL-BHAV — Product Requirements Document
+
+**An AI that picks up the phone and haggles for you, in your language.**
+
+Sarvam Epoch Buildathon · GrowthX · Sunday 26 July 2026
+Build sprint 10:30–16:30 IST · **Freeze 16:00 · Submit 16:10** (not 16:29)
+
+---
+
+## 0. READ THIS FIRST
+
+This PRD is written to be executed by several agents/humans working **in parallel**. Section 16
+defines five lanes with **frozen interface contracts**. If you are an agent picking this up:
+
+1. Find your lane in §16.
+2. You may only write files inside your lane's directory. Touching another lane's directory is a
+   merge-blocking offence.
+3. The Convex schema (§9) is frozen at 10:45 and is the **only** shared surface. If you need a field
+   that doesn't exist, write it into `meta: v.any()` and move on. A schema change at 15:00 breaks
+   three lanes simultaneously.
+4. Two things you will be tempted to do at 14:00 and must not: **rewrite the Pipecat example
+   "properly"**, and **consolidate the bridge into Convex**. Both are forbidden in writing. See §16.
+
+**If you are reading this later than 11:15**, skip to §3 (procurement) and §17 (hour-by-hour) and
+compress: the go/no-go gate at §12 must still be green by 12:30 or you switch to Fallback Rung 2.
+
+---
+
+## 1. THE PRODUCT
+
+**One line:** You tell Mol-Bhav what you want to buy and what you want to pay. It finds real
+businesses, calls them on the actual phone network, negotiates in the language the shopkeeper
+speaks, and sends you back the best deal.
+
+**The demo sentence that wins:** *An AI ran a live reverse auction over the PSTN and used one
+stranger's quote against another's.*
+
+Not "an AI made a phone call" — that was 2024. The differentiator is **cross-call leverage**:
+call #2 cites the real price obtained on call #1, ninety seconds earlier.
+
+### Example mission
+
+> User sends a Telegram **voice note in Hindi**:
+> *"Karol Bagh mein 250 litre ka fridge chahiye, 25 hazaar se kam."*
+
+Mol-Bhav transcribes it, extracts `{category: refrigerator, capacity: 250L, locality: Karol Bagh,
+targetPriceInr: 25000}`, finds three real electronics dealers with real phone numbers, calls them
+sequentially, negotiates each in Hindi, and returns:
+
+```
+3 shops called · 6m 40s
+  Sharma Electronics   ₹27,500 → ₹24,200   (-12%)
+  Gupta Home Appliances ₹26,000 → ₹23,500   (-10%)   ★ BEST
+  Karol Bagh Digital    ₹28,000 → ₹25,900   (-7%)
+
+You save ₹3,200 vs. the best opening quote.
+Ask for Rakesh. Price held until Tuesday 6 PM.
+```
+
+Delivered as a Telegram text table **plus a Bulbul voice note in Hindi**, plus a link to the
+dashboard where every transcript is readable.
+
+### Scope boundary
+
+Mol-Bhav **negotiates and reports**. It does **not** book, reserve, pay, or commit. The agent says:
+*"I'll pass this to the customer, they'll confirm directly."* This is both an ethical line and a
+scope cut that saves you two hours.
+
+---
+
+## 2. HOW THIS SCORES
+
+Judging is 50 points across six weighted parameters. Every feature below is mapped to the line it
+farms. **Build the high-multiplier lines first.**
+
+| Parameter | ×    | What literally scores it |
+|---|---|---|
+| **Job-to-be-done completion** | **2.5** | A real PSTN call to a real business that produces a real, lower price. Nothing else. |
+| **Sarvam capability depth** (track: **Voice Experience**) | **2.5** | Eight distinct Sarvam surfaces in one flow (§7). Put them on one slide with checkmarks. |
+| Creativity | 1.5 | Cross-call price citation. Mid-call language switching. |
+| Impact | 1.5 | ₹ saved, minutes saved, and the compliance posture (§15) — "this is the responsible version". |
+| Memory & Context | 1.0 | `learnedPrefs` carried across missions; the left-rail conversation history; the dashboard. |
+| Delight | 1.0 | The Negotiation Arc component; the Bulbul voice-note reply; the live transcript typing itself. |
+
+Scale is L1=1 … L5=5 per parameter.
+
+**Judges perform "database spot checks and contact checks."** This is a gift, not a threat — see
+the closing move in §18. Keep `record=True` on every call from 11:00 onward so by 16:00 you have a
+Convex table with 8–12 genuine completed negotiations to be spot-checked.
+
+**Pick ONE Sarvam track: Voice Experience.** Only the chosen capability scores. Do not dilute into
+Document Intelligence or Dubbing.
+
+---
+
+## 3. WHAT YOU NEED TO PROCURE — the T+0 checklist
+
+This is the answer to *"we need a phone number, is there anything else?"* — a phone number is not
+one thing, and it is the item with the most hidden gates.
+
+### Critical path — one person, 20 minutes, does nothing else
+
+| # | Item | Notes |
+|---|---|---|
+| 1 | **Enable international transactions in your bank app, FIRST** | RBI disables intl by default on new Indian cards. A silent 3DS decline at 11:00 kills the whole day. **Carry two cards from different banks.** |
+| 2 | **Twilio account → UPGRADE IMMEDIATELY (~$20)** | **Non-negotiable.** `<Stream>` and `<Record>` are *blocked TwiML verbs on trial*. There is no degraded mode — it is a binary gate. Trial also restricts you to 5 verified numbers and to your signup country. |
+| 3 | **Buy a US local number** | Console → Buy a Number → filter **Address Requirement = None**. ~$1.15/mo. |
+| 4 | **Geo Permissions → India, BOTH low-risk AND high-risk** | Voice → Settings → Geo Permissions. Indian *mobiles* land in the high-risk range, and high-risk requires the upgraded account. Missing this = error 21215. |
+| 5 | **Ring test within 5 minutes of upgrading** | §12 has the curl. You want a fraud hold to surface at T+30, not T+300. |
+| 6 | **Sarvam API key + ₹2,000 top-up** | Free credits are **₹100 ≈ 8–12 calls**. You will burn that before lunch on voice-picking alone. Top-up is self-serve INR at `dashboard.sarvam.ai/billing` — no GST, no KYC, no intl card needed. |
+
+### Fast — next 20 minutes, in parallel
+
+7. **Convex project** — `npm create convex@latest`, GitHub OAuth, no card. *Every laptop logs into
+   Convex now, not at 14:00.*
+8. **Telegram bot token** from @BotFather.
+9. **ngrok authenticated** — free tier gives one auto-assigned persistent `*.ngrok-free.dev`. You
+   **cannot** reserve a custom domain on free; don't go hunting for it. Install `cloudflared` as a
+   hot spare — venue networks sometimes block one provider and not the other.
+10. **Google Cloud project + billing enabled + Places API (New) enabled.** The billing-enable step is
+    the slow part. Hard-cut at 12:30 if it isn't working (§13).
+11. **Vercel account** linked to the repo.
+
+### Things you didn't ask about but need
+
+12. **A second physical phone** on a teammate — your guaranteed pickup, and a genuine PSTN call on
+    the identical code path.
+13. **Pre-arranged consent from 3 real businesses.** At lunch, walk to three shops near the venue (or
+    WhatsApp three you know) and get explicit consent to be called by an AI around 17:45. Log it in
+    `consentEvents`. TRAI's Feb 2025 amendment caps explicit-consent validity at 7 days, so lunchtime
+    consent for an evening demo is comfortably valid.
+14. **A wired earbud or lav mic into the room PA.** Never open speakerphone — see Risk 3.
+15. **A recorded fallback video**, cut by 14:30.
+
+### Explicitly forbidden today
+
+**Do not open signup flows for Exotel, Ozonetel, Knowlarity, Plivo-India DIDs, or Telnyx
+international.** All require business-entity KYC, Certificate of Incorporation + GST, and take 1–7
+business days. Telnyx Level-2 verification alone is ≤48h. These are Category C — impossible today —
+and an agent will waste 40 minutes discovering that.
+
+---
+
+## 4. ARCHITECTURE
+
+Four processes. **Convex is the only shared surface; nothing else talks to anything else.**
+
+```
+ Telegram  ──webhook──▶  CONVEX  (httpAction @ *.convex.site)
+   (voice note or text)        │
+                               ├─ internalAction: Saaras batch STT   (if voice note)
+                               ├─ internalAction: sarvam-30b intent extraction → brief
+                               ├─ internalAction: Places searchText / leads.json → vendors[]
+                               ├─ complianceGate() per vendor
+                               └─ scheduler.runAfter(i * 500ms, dial)   ← 500ms STAGGER, mandatory
+                                          │
+                                          ▼  POST https://<ngrok>/call   (x-bridge-secret)
+                               BRIDGE  (Python 3.12 · FastAPI + Pipecat · laptop behind ngrok)
+                                          │
+                                          ├─ twilio.calls.create(to=+91…, from=+1…,
+                                          │     twiml=<Connect><Stream><Parameter name="callId"/>)
+                                          ▼
+                          Twilio PSTN ──mulaw/8k──▶ /ws   (TwilioFrameSerializer)
+                                          │
+                       ┌──────────────────┴───────────────────┐
+                       │  Pipecat pipeline @ 8000 Hz          │
+                       │  transport.input()                   │
+                       │    → SarvamSTT(saaras:v3,            │
+                       │        language="unknown",           │
+                       │        mode="codemix")               │
+                       │    → context.user()                  │
+                       │    → SarvamLLM(sarvam-30b)           │
+                       │    → SarvamTTS(bulbul:v3)            │
+                       │    → transport.output()              │
+                       │    → context.assistant()             │
+                       └──────────────────┬───────────────────┘
+                                          │ fire-and-forget POSTs
+                                          │ (NEVER awaited on the audio thread — a slow
+                                          │  POST becomes dead air on a live phone call)
+                                          ▼
+                       CONVEX   /ingest/turn · /ingest/status · /ingest/outcome · /ingest/langswitch
+                                          │
+                                          ▼  reactive useQuery over websocket (~100ms)
+                       DASHBOARD (Vite+React)          TELEGRAM (Bulbul voice-note summary)
+```
+
+**Why the bridge is a separate process and cannot be folded into Convex:** Convex `httpAction`
+handlers take a `Request` and return a `Response`. There is no socket-upgrade API. Convex
+*structurally cannot* terminate a Twilio media stream. This is not a preference and it is not
+negotiable at 14:00.
+
+---
+
+## 5. END-TO-END DATA FLOW FOR ONE CALL
+
+| T | Step |
+|---|---|
+| **+0.0s** | User sends Telegram voice note: *"Karol Bagh mein 250 litre ka fridge chahiye, 25 hazaar se kam."* |
+| **+0.3s** | Telegram webhook → `POST https://<dep>.convex.site/telegram`. Verify `X-Telegram-Bot-Api-Secret-Token`. **Return 200 in <100ms**, schedule the real work. |
+| **+0.5s** | `internalAction`: `getFile` → download OGG from `api.telegram.org/file/bot<TOK>/<path>` → `POST https://api.sarvam.ai/speech-to-text` multipart, `model=saaras:v3`, `language_code=unknown`. **OGG/Opus is accepted directly — no ffmpeg.** ⚠️ 30-second cap on the sync endpoint. → transcript + `language_code`. **Sarvam surface ①** |
+| **+1.5s** | `POST https://api.sarvam.ai/v1/chat/completions`, `model=sarvam-30b`, `response_format={"type":"json_object"}` → `{category, locality, constraints[], targetPriceInr, walkAwayInr, language}`. Insert `missions` row. **Sarvam surface ②** |
+| **+2.0s** | Vendor resolution → up to 3 `vendors` rows. Each runs `complianceGate()`. **Rejected vendors still get a row, with `gateReason`** — so judges can watch the gate working. |
+| **+2.5s** | `scheduler.runAfter(idx * 500, internal.calls.dial)`. The **500ms stagger is mandatory**: Sarvam rejects burst-opened sockets with close code 1003 well below the stated concurrency ceiling. |
+| **+3.0s** | `dial` action → `POST https://<ngrok>/call` with the brief and `priorQuotes[]`. Bridge calls `twilio.calls.create(...)`, returns `{twilioCallSid}` → patched onto `calls`. |
+| **+8.0s** | Vendor answers. Twilio opens `wss://<ngrok>/ws`, sends `event:start` with `customParameters.callId` and `mediaFormat {audio/x-mulaw, 8000, 1}`. Bridge looks up the brief by `callId`, builds the system prompt, queues `LLMRunFrame()` **so the agent speaks first**. |
+| **+8.5s** | Bulbul speaks the disclosure opener. Serializer converts PCM→mulaw. Bridge fire-and-forgets `/ingest/turn`. Dashboard renders it ~100ms later. **Sarvam surface ③** |
+| **+12s** | Vendor replies in Hinglish. Serializer mulaw→PCM16 → Saaras at 8kHz → `{transcript, language_code, language_probability}`. **Sarvam surface ④** — if language changed, confident, in TTS_11, and stable for 2 finals → `TTSUpdateSettingsFrame` + a `langSwitches` row. |
+| **+13s** | `sarvam-30b`, `max_tokens=100` → one short counter-offer. **`priorQuotes` from earlier completed calls in this mission are in the system prompt. This is the cross-call reverse-auction moment.** Loop 8–14 turns. |
+| **+230s** | Agent closes (name + hold-until + price) or hits walk-away and exits politely. `maxCallDurationSec=240` hard guard. |
+| **+232s** | Twilio `StatusCallback` → `/ingest/status`. ⚠️ **form-encoded**, not JSON. `internalMutation` patches `calls` and **atomically** schedules `summarizeCall` + the next vendor. |
+| **+234s** | `sarvam-105b`, `response_format=json_object` over the transcript → structured outcome → `/ingest/outcome`. **Sarvam surface ⑤** |
+| **+236s** | Mayura translate → English transcript for the dashboard toggle. Transliterate → romanised line under each Devanagari bubble. **Sarvam surfaces ⑥ + ⑦** |
+| **+240s** | All calls done → comparison computed → Telegram gets a **Bulbul voice note** (REST TTS @ 22050Hz, a *different* speaker from the call voice) + text table + dashboard deep link. |
+| *(stretch)* | Batch Saaras with `with_diarization=True` over the Twilio recording → per-speaker talk-time metrics. **Sarvam surface ⑧** |
+
+---
+
+## 6. STACK — exact packages
+
+### Bridge — Python **3.12**
+
+Not 3.13: `audioop` was removed from the stdlib and `requires_python>=3.11` will happily let 3.13
+install and then fail deep inside a dependency.
+
+```bash
+uv venv --python 3.12
+uv pip install "pipecat-ai[websocket,sarvam,silero]>=1.6.0" twilio fastapi uvicorn \
+               python-dotenv loguru httpx audioop-lts
+```
+
+**Start from the official example, do not write from scratch:**
+
+```bash
+git clone --depth 1 https://github.com/pipecat-ai/pipecat-examples
+cd pipecat-examples/twilio-chatbot/outbound/
+```
+
+It already has `server.py`, `bot.py`, `server_utils.py`, and `/dialout → calls.create → /twiml → /ws`
+wired end to end. **Swap Deepgram/Cartesia/OpenAI for the Sarvam trio and change nothing structural.**
+
+Sarvam's own reference implementation is at
+`https://docs.sarvam.ai/api/integration/build-voice-agent-with-twilio` — it uses
+`pip install "pipecat-ai[websocket,sarvam]"`, launches with `python agent.py --transport twilio`,
+and serves FastAPI on port 7860 at `/ws`. That guide covers the **inbound** pattern; we need
+**outbound**, which is why we start from `pipecat-examples/twilio-chatbot/outbound/`.
+
+### Backend — `convex@^1.42`
+
+Runs on the default (non-Node) runtime. `fetch` works. **No `"use node"` directive needed.**
+
+### Dashboard
+
+```bash
+git clone --depth 1 https://github.com/get-convex/template-react-vite-shadcn
+```
+
+Verified `npm install` + `vite build` clean. Use the plain variant, **not** `convexauth`.
+
+Do **not** use `vercel/ai-chatbot` (hard-binds Postgres + Drizzle + Auth.js — an hour of ripping out).
+Do **not** use `assistant-ui` (models an interactive composer chat; a call transcript is read-only
+and two-party).
+
+### Telegram
+
+**No separate process.** Webhook lands directly on a Convex `httpAction`.
+
+### Tunnel
+
+ngrok free, auto-assigned persistent `*.ngrok-free.dev`. `cloudflared` installed as hot spare.
+
+### Fallback LLM path
+
+If `SarvamLLMService` misbehaves, `OpenAILLMService(base_url="https://api.sarvam.ai/v1",
+model="sarvam-30b")` works and is still 100% Sarvam for judging purposes.
+
+### The service config, frozen
+
+```python
+from pipecat.services.sarvam.stt import SarvamSTTService
+from pipecat.services.sarvam.tts import SarvamTTSService
+from pipecat.services.sarvam.llm import SarvamLLMService
+from pipecat.frames.frames import TTSUpdateSettingsFrame, LLMRunFrame
+
+stt = SarvamSTTService(
+    api_key=SARVAM_KEY,
+    sample_rate=8000,                  # default is 16000 — MUST override for telephony
+    mode="codemix",                    # constructor kwarg, NOT a Settings field
+    settings=SarvamSTTService.Settings(
+        model="saaras:v3",
+        language="unknown",            # ← this is what turns on auto-detection
+        vad_signals=True,
+        high_vad_sensitivity=False,    # False: the demo hall is loud
+    ),
+    keepalive_interval=5.0,            # Sarvam closes idle sockets at 60s
+)
+
+tts = SarvamTTSService(
+    api_key=SARVAM_KEY,
+    sample_rate=8000,                  # bulbul:v3 default is 24000 — MUST override
+    settings=SarvamTTSService.Settings(
+        model="bulbul:v3",
+        voice="anushka",
+        # ⚠️ SEE OPEN QUESTION Q1 — field may be `language` or `target_language_code`
+        language=Language.HI,
+        pace=1.0,
+        enable_preprocessing=True,     # makes prices speak as words, not digits
+        min_buffer_size=30,            # faster first audio out
+    ),
+)
+
+llm = SarvamLLMService(
+    api_key=SARVAM_KEY,
+    settings=SarvamLLMService.Settings(model="sarvam-30b", max_tokens=100),
+)
+
+task = PipelineTask(
+    pipeline,
+    params=PipelineParams(
+        audio_in_sample_rate=8000,
+        audio_out_sample_rate=8000,
+        allow_interruptions=ALLOW_INTERRUPTIONS,   # env flag — flip to False if the room is loud
+    ),
+)
+```
+
+**Do not set `output_audio_codec`.** It does not exist on the Pipecat service, and Sarvam's STT
+WebSocket only accepts `wav | pcm_s16le | pcm_l16 | pcm_raw` inbound — mulaw is not accepted, so a
+decode is unavoidable regardless. `TwilioFrameSerializer` owns both conversions.
+
+---
+
+## 7. SARVAM API SURFACE — the eight surfaces
+
+Auth header: `api-subscription-key: <KEY>` on everything. `/v1/*` additionally accepts
+`Authorization: Bearer <KEY>`. **Auth failure returns 403, not 401** — don't spend ten minutes
+debugging a 401 you'll never see.
+
+| # | Surface | Endpoint | Key params |
+|---|---|---|---|
+| ① | **Streaming STT** (phone leg) | `wss://api.sarvam.ai/speech-to-text/ws` | `model=saaras:v3`, `language-code=unknown`, `mode=codemix`, `sample_rate=8000`, `input_audio_codec=pcm_s16le`, `vad_signals=true`, `high_vad_sensitivity=false` |
+| ② | **Batch STT** (Telegram voice note) | `POST https://api.sarvam.ai/speech-to-text` | multipart `file` + `model=saaras:v3`, `language_code=unknown`. Accepts OGG/Opus directly. **30s cap.** |
+| ③ | **Streaming TTS** (phone leg) | `wss://api.sarvam.ai/text-to-speech/ws?model=bulbul:v3` | `target_language_code`, `speaker`, `speech_sample_rate=8000`, `pace=1.0`, `min_buffer_size=30`, `enable_preprocessing=true` |
+| ④ | **Chat — live loop** | `POST https://api.sarvam.ai/v1/chat/completions` | `model=sarvam-30b`, `max_tokens=100`, `temperature=0.4` |
+| ⑤ | **Chat — extraction** | same | `model=sarvam-105b`, `response_format={"type":"json_object"}`, `max_tokens=4096`, `reasoning_effort=None` |
+| ⑥ | **REST TTS** (Telegram voice note, voice preview) | `POST https://api.sarvam.ai/text-to-speech` | `{text, target_language_code, speaker, model:"bulbul:v3", sample_rate:22050}` → `audios[0]` base64 |
+| ⑦ | **Translate (Mayura)** + **Transliterate** | `POST /translate`, `POST /transliterate` | Hindi transcript → English toggle; romanised line under Devanagari |
+| ⑧ | **Batch diarized analytics** *(stretch)* | Batch STT job | `saaras:v3`, `mode=translate`, `with_diarization=True` → `SPEAKER_00/01` + `start_time_seconds` → talk-time metrics per speaker |
+
+**Streaming TTS has no server-side cancel message.** Barge-in is client-side; Pipecat handles it.
+The TTS config **is** re-sendable mid-connection and the buffer auto-flushes — that is what makes
+mid-call voice switching possible.
+
+### Speakers — no list endpoint exists, hardcode
+
+bulbul:v3, lowercase and case-sensitive, default `shubh`:
+
+```
+anushka  shubh  aditya  ritu  priya  neha  rahul  pooja
+simran   kavya  ishita  shreya  anand  tanya  suhani  rupali
+```
+
+23 male + 14 female voices exist in total. **Ship 6–8 curated in the picker, not 39.**
+⚠️ **v2 and v3 speaker sets are not interchangeable.**
+
+### Rate limits and money — Starter tier
+
+| Limit | Value |
+|---|---|
+| STT WebSocket concurrency | 20 |
+| TTS WebSocket concurrency | 30 (bulbul:v3 — halved vs v2) |
+| bulbul:v3 REST | 30 req/min |
+| **sarvam-30b / 105b chat** | **40 req/min** ← the real ceiling for 3 parallel calls |
+| Burst behaviour | **Sockets opened in a burst are rejected below the stated ceiling, close code 1003. Space ≥300ms. We use 500ms.** |
+
+Pricing: STT ₹30/hr · bulbul:v3 ₹30/10K chars · 30B ₹2.5 per 1M tok · 105B ₹10 per 1M tok.
+Free credits ₹100 ≈ 8–12 four-minute calls.
+
+**Running out of Sarvam credits at 15:00 is a more probable death than the Twilio card, and nobody
+budgets for it. Top up ₹2,000 at T+0:10.**
+
+### Free time-savers
+
+- MCP server: `https://docs.sarvam.ai/_mcp/server` — wire it into Claude Code
+- Append `.md` to any Sarvam docs URL for clean markdown
+- `https://docs.sarvam.ai/llms-full.txt`
+- Cookbook: `github.com/sarvamai/sarvam-ai-cookbook` — **the LiveKit "Collection Agent" recipe is
+  structurally a negotiator**, read it
+- Discord `discord.com/invite/5rAsykttcs` — Sarvam staff are likely live during the buildathon
+
+---
+
+## 8. LANGUAGE DETECTION AND SWITCHING — the complete answer
+
+You asked whether the agent can detect the callee's language and adapt, rather than the user picking
+it up front. **Yes — and it's native, not custom.** Do both: auto-detect with a manual override.
+
+### (a) Detect
+
+Set `language-code=unknown` on the STT socket. Every response then carries `language_code` (BCP-47)
+and `language_probability` (0–1).
+
+⚠️ **These fields are populated *only* when the param is omitted or set to `unknown`.** Pass a
+specific code and detection is skipped and probability comes back null. Detection is per-utterance,
+so no reconnection is needed when the speaker changes.
+
+### (b) Code-mixed
+
+`mode="codemix"` returns Indic words in native script and English words in Latin:
+
+> `मेरा phone number है 9840950950`
+
+That is exactly how a Karol Bagh shopkeeper actually speaks, and it demos visibly better than a
+flattened transcript. Sarvam's own IVR guide recommends plain `transcribe` for IVR; we deliberately
+override because **Hinglish fidelity is the domain flex**. Keep `STT_MODE` as an env var so it's a
+one-word rollback if 30B's comprehension degrades (see Q3).
+
+### (c) Reply in the detected language
+
+`TTSUpdateSettingsFrame(language=…, voice=…)` is a first-class Pipecat frame. ~20 lines total.
+**Gate it hard or it flaps every turn:**
+
+```python
+TTS_11 = {"hi-IN","en-IN","bn-IN","gu-IN","kn-IN","ml-IN",
+          "mr-IN","od-IN","pa-IN","ta-IN","te-IN"}
+
+VOICE = {"hi-IN":"anushka", "ta-IN":"kavya",  "te-IN":"ishita", "kn-IN":"priya",
+         "mr-IN":"neha",    "bn-IN":"shreya", "ml-IN":"rupali", "gu-IN":"pooja",
+         "pa-IN":"tanya",   "od-IN":"suhani", "en-IN":"anand"}
+
+async def on_final(d):                       # d = STT data payload
+    lang = d.get("language_code")
+    conf = d.get("language_probability") or 0.0
+    if lang not in TTS_11 or lang == state.lang or conf < 0.80:
+        state.streak = 0
+        return
+    state.streak += 1
+    if state.streak < 2:                     # hysteresis: 2 consecutive confident finals
+        return
+    await task.queue_frame(TTSUpdateSettingsFrame(language=lang, voice=VOICE[lang]))
+    await ingest_lang_switch(state.callId, state.lang, lang, conf)
+    state.lang, state.streak = lang, 0
+```
+
+### The asymmetry you must respect
+
+**STT covers 23 languages. TTS covers 11.** You can transcribe Maithili, Kashmiri or Santali and you
+**cannot answer in them**. Membership in `TTS_11` is checked before any switch, and the demo is
+constrained to those 11 — otherwise your flagship feature fails live on stage.
+
+### Why this architecture is forced, not chosen
+
+Neither STT WebSocket channel accepts a language reconfiguration mid-stream —
+`/speech-to-text/ws` has no config message at all, and `/speech-to-text-translate/ws`'s config
+carries only `prompt`. So **STT-auto-detect + TTS-reconfigure is the only shape that works.**
+
+For typed Telegram requests, run `POST /text-lid` to pick the initial call language.
+
+**On stage, say: "it just changed language because he did."** Nobody else will demo this.
+
+---
+
+## 9. CONVEX SCHEMA — frozen at 10:45, never renegotiated
+
+Lane B owns this file. Every other lane reads it.
+
+```ts
+// convex/schema.ts
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+// The 11 TTS languages. STT knows 23; never emit outside this set.
+const TTS_LANG = v.union(
+  v.literal("hi-IN"), v.literal("en-IN"), v.literal("bn-IN"), v.literal("gu-IN"),
+  v.literal("kn-IN"), v.literal("ml-IN"), v.literal("mr-IN"), v.literal("od-IN"),
+  v.literal("pa-IN"), v.literal("ta-IN"), v.literal("te-IN"));
+
+export default defineSchema({
+  users: defineTable({
+    tgUserId: v.string(),
+    displayName: v.optional(v.string()),
+    preferredLang: TTS_LANG,
+    preferredVoice: v.string(),
+    learnedPrefs: v.array(v.string()),   // ← Memory & Context rubric. Injected verbatim into prompts.
+    totalSavedInr: v.number(),
+    createdAt: v.number(),
+  }).index("by_tg", ["tgUserId"]),
+
+  sessions: defineTable({                // the entire auth system. See Contract 5.
+    token: v.string(),
+    userId: v.id("users"),
+    expiresAt: v.number(),
+  }).index("by_token", ["token"]),
+
+  missions: defineTable({
+    userId: v.id("users"),
+    rawRequest: v.string(),
+    inputMode: v.union(v.literal("voice"), v.literal("text")),
+    brief: v.object({
+      category: v.string(),
+      locality: v.string(),
+      constraints: v.array(v.string()),
+      targetPriceInr: v.number(),
+      walkAwayInr: v.number(),
+      language: TTS_LANG,
+    }),
+    status: v.union(v.literal("pending"), v.literal("discovering"),
+                    v.literal("calling"), v.literal("done"), v.literal("failed")),
+    bestCallId: v.optional(v.id("calls")),
+    savedInr: v.optional(v.number()),
+    summaryText: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_user_created", ["userId", "createdAt"])
+    .index("by_status", ["status"]),
+
+  vendors: defineTable({
+    missionId: v.id("missions"),
+    name: v.string(),
+    phoneE164: v.string(),
+    address: v.optional(v.string()),
+    sourceUrl: v.optional(v.string()),
+    source: v.union(v.literal("curated"), v.literal("places")),  // for the judges' contact check
+    rank: v.number(),
+    gatePassed: v.boolean(),
+    gateReason: v.optional(v.string()),   // show the compliance gate working
+  }).index("by_mission_rank", ["missionId", "rank"])
+    .index("by_phone", ["phoneE164"]),
+
+  calls: defineTable({                    // COLD table. ~6 patches per call, total.
+    missionId: v.id("missions"),
+    vendorId: v.id("vendors"),
+    userId: v.id("users"),
+    phoneE164: v.string(),
+    fromNumber: v.string(),
+    status: v.union(v.literal("queued"), v.literal("dialing"), v.literal("ringing"),
+                    v.literal("talking"), v.literal("closed"),
+                    v.literal("no_answer"), v.literal("failed")),
+    twilioCallSid: v.optional(v.string()),
+    lang: TTS_LANG,
+    voice: v.string(),
+    detectedLangs: v.array(v.string()),
+    openingQuoteInr: v.optional(v.number()),  // ← the negotiation ARC, not just a price
+    finalQuoteInr: v.optional(v.number()),
+    quoteTurnSeq: v.optional(v.number()),     // links the price to its transcript line
+    terms: v.optional(v.string()),
+    contactName: v.optional(v.string()),
+    holdUntil: v.optional(v.string()),
+    closed: v.optional(v.boolean()),
+    recordingUrl: v.optional(v.string()),
+    durationSec: v.optional(v.number()),
+    startedAt: v.optional(v.number()),
+    endedAt: v.optional(v.number()),
+    lastError: v.optional(v.string()),
+    meta: v.optional(v.any()),              // ← escape hatch. Use this instead of changing the schema.
+  }).index("by_mission", ["missionId"])
+    .index("by_sid", ["twilioCallSid"])
+    .index("by_status", ["status"])
+    .index("by_from_time", ["fromNumber", "startedAt"]),
+
+  turns: defineTable({                    // append-only. FINALS ONLY. Never one row per ASR chunk.
+    callId: v.id("calls"),
+    seq: v.number(),
+    role: v.union(v.literal("agent"), v.literal("vendor"), v.literal("system")),
+    text: v.string(),
+    textEn: v.optional(v.string()),
+    romanized: v.optional(v.string()),
+    langCode: v.optional(v.string()),
+    langProbability: v.optional(v.number()),
+    sarvamRequestId: v.optional(v.string()),  // audit trail — proves a real API call to a judge
+    tsMs: v.number(),
+  }).index("by_call_seq", ["callId", "seq"]),
+
+  callLive: defineTable({                 // HOT. Exactly one row per call. Max 4 Hz.
+    callId: v.id("calls"),
+    partialText: v.string(),
+    partialRole: v.union(v.literal("agent"), v.literal("vendor")),
+    nextSeq: v.number(),
+    updatedAt: v.number(),
+  }).index("by_call", ["callId"]),
+
+  langSwitches: defineTable({             // demo this table live
+    callId: v.id("calls"),
+    atMs: v.number(),
+    fromLang: v.string(),
+    toLang: v.string(),
+    confidence: v.number(),
+  }).index("by_call", ["callId"]),
+
+  consentEvents: defineTable({
+    callId: v.optional(v.id("calls")),
+    phoneE164: v.string(),
+    language: v.string(),
+    channel: v.union(v.literal("prearranged"), v.literal("on_call")),
+    disclosureText: v.string(),
+    calleeResponse: v.optional(v.string()),
+    consentGiven: v.boolean(),
+    atMs: v.number(),
+  }).index("by_phone", ["phoneE164"]),
+
+  dnc: defineTable({                      // global, permanent, honoured across all users
+    phoneE164: v.string(),
+    reason: v.string(),
+    callId: v.optional(v.id("calls")),
+    atMs: v.number(),
+  }).index("by_phone", ["phoneE164"]),
+
+  chatMessages: defineTable({
+    userId: v.id("users"),
+    missionId: v.optional(v.id("missions")),
+    role: v.union(v.literal("user"), v.literal("assistant")),
+    text: v.string(),
+    audioStorageId: v.optional(v.id("_storage")),
+    surface: v.union(v.literal("telegram"), v.literal("web")),
+    createdAt: v.number(),
+  }).index("by_user_created", ["userId", "createdAt"]),
+});
+```
+
+### Two rules enforced in review
+
+1. **The only function allowed to write during a live call is `internal.transcripts.applyBatch`**,
+   at ≤4 Hz, touching exactly one `callLive` doc. Patching `calls.turnCount` on every chunk causes
+   OCC conflict storms and burns through the 1M free function calls.
+2. **The dashboard subscribes to two queries**, not one: `turns` (cold, re-runs only on finals) and
+   `livePartial` (hot, reads a single doc). It renders `[...turns, partial]`.
+
+---
+
+## 10. THE TELEPHONY DECISION
+
+### DECIDED: Twilio, upgraded, US +1 caller ID → +91, `<Connect><Stream>`, Pipecat bridge.
+
+Twilio's India Voice Guidelines, verbatim: *"Outbound calls to India can only be made from
+international (non-Indian) numbers."* A US caller ID dialling +91 is the **documented, supported
+path**. No KYC, no DLT, no GST, no Certificate of Incorporation.
+
+The June 2026 SHAKEN/STIR + Trust Hub tightening applies to calls **terminating in the US** —
+international calls take Level C attestation and sit outside it.
+
+An Indian +91 caller ID is **unobtainable at any price today**, and +91→+91 has been hard-blocked
+since 2024-08-01.
+
+⚠️ **CLI spoofing is a cognizable, non-bailable offence under s.42(3)(c) of the Telecommunications
+Act 2023. Never.**
+
+### The go/no-go ring test — run at T+25, within 5 minutes of upgrading
+
+```bash
+curl -X POST "https://api.twilio.com/2010-04-01/Accounts/$SID/Calls.json" \
+  --data-urlencode "To=+919XXXXXXXXX" \
+  --data-urlencode "From=$US_NUM" \
+  --data-urlencode 'Twiml=<Response><Say>Namaste. Telephony works.</Say></Response>' \
+  -u "$SID:$TOKEN"
+```
+
+| Result | Meaning |
+|---|---|
+| `21215` | Geo permissions — go enable India high-risk |
+| `21264` | You are still on trial — the upgrade didn't take |
+| Created but silent | Carrier-side. Try a number on a different operator. |
+
+### Call-create parameters — frozen
+
+```python
+twilio.calls.create(
+    to=phone,
+    from_=US_NUM,
+    twiml=f'<Response><Connect><Stream url="wss://{NGROK}/ws">'
+          f'<Parameter name="callId" value="{callId}"/>'
+          f'</Stream></Connect></Response>',        # ≤4000 chars
+    record=True,          # judge spot-check + fallback footage. Free. Do this from 11:00 onward.
+    timeout=12,           # ring budget, then move on to the next vendor
+    status_callback=f"{CONVEX_SITE}/ingest/status",
+    status_callback_event=["initiated", "ringing", "answered", "completed"],
+)
+```
+
+⚠️ **No `MachineDetection`.** Synchronous AMD holds the callee in silence for several seconds before
+your TwiML executes, and *causes* the hangups it was meant to prevent. If voicemail becomes a real
+problem, use `async_amd=True` + `async_amd_status_callback` — never the synchronous flag. For three
+pre-consented calls, AMD is pure downside.
+
+### Fallback ladder — each rung has an owner and a decision time
+
+| # | Rung | Trigger | Build cost | Notes |
+|---|---|---|---|---|
+| **1** | Twilio + `<Connect><Stream>` + Pipecat/Sarvam streaming | default | — | Sub-1.5s turns, barge-in |
+| **2** | Twilio + `<Play>`/`<Record>` turn loop, **100% inside Convex** | G3 not green by **12:30** — the integrator decides alone, no committee | 60–90 min | No ngrok, no bridge process, no resampling. `ctx.storage.getUrl()` is public so Twilio can `<Play>` it. Batch Saaras + REST Bulbul. ~3–5s/turn, which reads as "the agent is thinking". Same prompt, same schema, same dashboard. **Still needs the paid account** — `<Record>` is also trial-blocked. |
+| **3** | Plivo international | Twilio account suspended (no same-day appeal) | 45 min | **Warm the signup at T+0, don't wait.** `<Stream bidirectional="true" contentType="audio/x-l16;rate=8000">` — **L16, so no mulaw conversion at all.** With `bidirectional="true"`, `audioTrack` must not be `outbound`/`both`. An official Plivo+Pipecat+Sarvam guide exists. +$0.004/min. |
+| **4** | Browser "vendor" tab (MediaRecorder → same Saaras/30b/Bulbul loop) + one recorded real PSTN call as evidence | no PSTN by 14:00 | 30 min | **Say out loud what it is.** Keeps 100% of Sarvam depth, loses some job-to-be-done. |
+| **✗** | Exotel / Ozonetel / Knowlarity / Plivo-India DIDs / Telnyx intl / any +91 origination | — | — | **Category C. Forbid anyone from opening these signup flows today.** |
+
+### Who we call
+
+**Pre-consented businesses only.** See §3 item 13. One teammate in the corridor on a real phone is
+the hot spare — that is still a genuine PSTN call on the identical code path, and **saying so out
+loud scores better than hiding it**.
+
+---
+
+## 11. CONTACT DISCOVERY — finding real phone numbers
+
+### DECIDED: Google Places API (New) `searchText`, with a curated `leads.json` as the demo floor.
+
+**The endpoint**
+
+```
+POST https://places.googleapis.com/v1/places:searchText
+Content-Type: application/json
+X-Goog-Api-Key: $GOOGLE_PLACES_KEY
+X-Goog-FieldMask: places.id,places.displayName,places.formattedAddress,
+                  places.nationalPhoneNumber,places.internationalPhoneNumber,
+                  places.rating,places.userRatingCount,places.businessStatus,
+                  places.googleMapsUri
+```
+
+```json
+{
+  "textQuery": "electronics shops selling refrigerators in Karol Bagh Delhi",
+  "regionCode": "IN",
+  "languageCode": "en",
+  "maxResultCount": 10,
+  "locationBias": {
+    "circle": { "center": {"latitude": 28.6519, "longitude": 77.1909}, "radius": 3000.0 }
+  }
+}
+```
+
+**The single most important fact:** `internationalPhoneNumber` and `nationalPhoneNumber` are in the
+**Enterprise** field-mask SKU, not Essentials or Pro. Requesting them promotes the whole request to
+the Enterprise tier and its price. **Good news: you get the phone number directly in `searchText` —
+no second Place Details round-trip per result.** Ask for the phone in the field mask and you're done
+in one call.
+
+⚠️ **Billing must be enabled on the GCP project or the API returns `REQUEST_DENIED` regardless of
+key validity.** This is the slow step. Start it at T+0 and hard-cut at **12:30** if it isn't green.
+
+⚠️ Google replaced the old flat $200/month credit with a per-SKU monthly free allowance in March
+2025. Verify your current quota in the console rather than trusting a number from a blog post — but
+either way, a hackathon's worth of requests is free. **Confidence: medium. Verify in console, don't
+debug from docs.**
+
+### Ranking and filtering
+
+```ts
+const vendors = places
+  .filter(p => p.businessStatus === "OPERATIONAL")
+  .filter(p => p.internationalPhoneNumber)          // no phone = useless to us
+  .filter(p => (p.userRatingCount ?? 0) >= 5)       // kills ghost listings
+  .sort((a, b) => (b.rating ?? 0) * Math.log1p(b.userRatingCount ?? 0)
+                - (a.rating ?? 0) * Math.log1p(a.userRatingCount ?? 0))
+  .slice(0, 3);
+```
+
+### E.164 normalisation — do not skip this
+
+Google returns `"+91 98765 43210"` with spaces, and landlines come back with STD codes like
+`"+91 11 2875 1234"`.
+
+```ts
+export function toE164(raw: string): string | null {
+  const digits = raw.replace(/[^\d+]/g, "");
+  if (digits.startsWith("+91") && digits.length === 13) return digits;   // +91 + 10 digits
+  if (digits.startsWith("+91") && digits.length >= 12) return digits;    // landline w/ STD
+  if (digits.length === 10) return "+91" + digits;
+  if (digits.startsWith("0") && digits.length === 11) return "+91" + digits.slice(1);
+  return null;                                                           // reject, log gateReason
+}
+```
+
+### India coverage reality
+
+Good for **hotels, restaurants, and branded retail** — those have strong Google Business Profile
+adoption. **Patchy for small kirana, local electronics dealers, and market-stall vendors**, which is
+exactly the segment your fridge demo targets. Plan for a 40–60% phone-number hit rate in that
+segment, which is why the next section is mandatory rather than optional.
+
+### The demo floor: `leads.json` — Lane E, done by 11:45
+
+**Build this before you build the Places integration.** It removes the GCP billing screen from your
+critical path entirely.
+
+15–20 hand-verified real businesses, **3 categories × 2 cities**, each personally checked to have a
+working number:
+
+```json
+[
+  {
+    "category": "refrigerator",
+    "locality": "Karol Bagh, Delhi",
+    "name": "Sharma Electronics",
+    "phoneE164": "+9111XXXXXXXX",
+    "address": "…",
+    "sourceUrl": "https://maps.google.com/…",
+    "source": "curated",
+    "consentObtained": true
+  }
+]
+```
+
+`source: "curated"` vs `"places"` is a real field in the `vendors` table, so when a judge asks
+"where did this number come from?" the answer is on screen.
+
+### Rejected alternatives — do not spend time here
+
+| Option | Verdict |
+|---|---|
+| **OpenStreetMap / Overpass** | `phone=` / `contact:phone=` tags exist but Indian SMB coverage is poor. Fine as a free supplement, useless as a primary. |
+| **Justdial / IndiaMART scraping** | **Trap.** Aggressive anti-bot, ToS violation, and you will spend 90 minutes on a CAPTCHA instead of on the negotiation prompt. |
+| **Yelp Fusion** | Effectively no India coverage. |
+| **Zomato / Swiggy / MMT APIs** | No open public API for phone numbers. |
+
+---
+
+## 12. TELEGRAM LAYER
+
+### Architecture: Convex `httpAction` **is** the webhook. No separate process.
+
+⚠️ **`httpAction`s live at `https://<deployment>.convex.site` — NOT `.convex.cloud`.** Registering
+the webhook against `.convex.cloud` silently 404s and you will lose twenty minutes.
+
+**Use raw `fetch` against `api.telegram.org`, not grammY.** grammY needs an adapter shim to run in
+Convex's runtime; for six hours, four raw fetch calls (`sendMessage`, `editMessageText`, `getFile`,
+`sendAudio`) are fewer moving parts than a framework.
+
+```ts
+// convex/http.ts
+import { httpRouter } from "convex/server";
+import { httpAction } from "./_generated/server";
+import { internal } from "./_generated/api";
+
+const http = httpRouter();
+
+http.route({
+  path: "/telegram",
+  method: "POST",
+  handler: httpAction(async (ctx, req) => {
+    // 1. Verify the secret. Telegram sends it as a header on every update.
+    if (req.headers.get("X-Telegram-Bot-Api-Secret-Token") !== process.env.TG_WEBHOOK_SECRET) {
+      return new Response("forbidden", { status: 403 });
+    }
+    const update = await req.json();
+
+    // 2. Schedule the real work and return 200 IMMEDIATELY.
+    //    Telegram retries aggressively if you are slow. Never await Sarvam here.
+    await ctx.scheduler.runAfter(0, internal.telegram.handleUpdate, { update });
+    return new Response(null, { status: 200 });
+  }),
+});
+
+export default http;
+```
+
+**Register it once:**
+
+```bash
+curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+  -d "url=https://<dep>.convex.site/telegram" \
+  -d "secret_token=$TG_WEBHOOK_SECRET" \
+  -d "allowed_updates=[\"message\",\"callback_query\"]"
+```
+
+### Voice-note input — a Sarvam-depth scoring surface, build it
+
+```
+message.voice.file_id
+  → GET api.telegram.org/bot<TOK>/getFile?file_id=…      → { file_path }
+  → GET api.telegram.org/file/bot<TOK>/<file_path>       → OGG/Opus bytes
+  → POST api.sarvam.ai/speech-to-text  (multipart)       → transcript + language_code
+```
+
+✅ **Telegram delivers OGG/Opus and Sarvam STT accepts OGG/Opus directly. No ffmpeg. No transcode.**
+This is confirmed in Sarvam's own Twilio/WhatsApp integration guide.
+
+⚠️ **The synchronous STT endpoint caps at 30 seconds of audio.** A user rambling for 45s gets an
+error. Either cap the UX ("keep it under 30 seconds") or route long notes to the Batch API. For the
+demo, cap it.
+
+### Live call updates — one message, edited, debounced
+
+**Telegram rate limits:** roughly **1 message per second per chat** and ~30/sec globally.
+`editMessageText` counts against the same budget. Editing to identical text returns
+`400: message is not modified`.
+
+**Strategy:** send **one** message when the call starts, then `editMessageText` on it at **most once
+per second**, re-rendering the last ~6 turns. Never one message per turn — a 14-turn call would
+blow the per-chat limit and spam the user.
+
+```ts
+// Debounce in Convex: a mutation stamps `pendingRender`, and a single scheduled
+// action 1000ms later reads the latest state and does ONE edit.
+// Guard against the identical-text error before calling editMessageText.
+if (rendered === lastRendered) return;
+```
+
+### Voice-note output — the one real format mismatch
+
+`sendVoice` requires **OGG encoded with OPUS**. `sendAudio` requires **MP3 or M4A**. Bulbul REST
+returns **WAV** base64. **Convex cannot run ffmpeg.**
+
+**Decision:** add a 15-line `POST /tts-ogg` endpoint to the bridge (Python, which *can* run ffmpeg),
+have Convex call it, and send the result with `sendVoice`.
+
+**If the bridge isn't up, fall back to `sendDocument`** — it accepts any format and always works.
+Do not spend more than 10 minutes on this; it is a Delight point, not a rubric line.
+
+### UX and commands
+
+| Command | Behaviour |
+|---|---|
+| `/start` | Create user, issue dashboard deep link |
+| free text / voice note | Parse intent → show a **confirmation card** → dial |
+| `/history` | Last 5 missions with savings |
+| `/language` | Inline keyboard: 6 curated languages + "Auto-detect ★" |
+| `/stop` | Kill all in-flight calls for this user |
+
+**The confirmation gate is mandatory** — never dial without one tap. Inline keyboard:
+
+```
+📋 Karol Bagh · 250L fridge
+   Target ₹25,000 · Walk away ₹27,000
+   3 shops found
+
+   [ 📞 Call all 3 ]  [ ✏️ Edit ]  [ ✖️ Cancel ]
+```
+
+This is both good UX and your answer when a judge asks about autonomy: **a human authorises every
+call.**
+
+### Dashboard linking — 20 minutes, no OAuth
+
+Bot inserts a `sessions` row and DMs `https://<app>/?t=<token>`. Dashboard stores it in
+`localStorage`, passes `token` to every query, and `requireSession(ctx, token)` validates it via the
+`by_token` index.
+
+**No Clerk** (45 minutes of OAuth callback config you do not have). **No Convex Auth** (officially
+beta). Say out loud that tokens appear in function args and logs — fine for a demo, not production.
+
+---
+
+## 13. THE NEGOTIATION BRAIN
+
+**This is worth more than any UI work and is under-resourced at every hackathon.** Lane E owns it
+from 12:30 and does nothing else until 14:00.
+
+### Structure — six blocks, under 500 tokens total, `max_tokens=100`
+
+#### Block 1 — Identity and mandatory disclosure (first 4 seconds)
+
+Order matters: **buyer intent first** (keeps the shopkeeper on the line), **disclosure second**,
+**consent question third**.
+
+> नमस्ते! मैं **{{userFirstName}}** जी की तरफ़ से बात कर रहा हूँ — उन्हें **{{ask}}** चाहिए।
+> एक बात पहले बता दूँ, मैं एक **AI असिस्टेंट** हूँ और यह कॉल रिकॉर्ड हो रही है।
+> क्या मैं आगे बात करूँ?
+
+English equivalent:
+
+> Hello! I'm calling on behalf of **{{userFirstName}}** — they're looking for **{{ask}}**.
+> Quick heads-up: I'm an **AI assistant**, and this call is being recorded.
+> Is it alright if I continue?
+
+TRAI's Feb 2025 amendment classifies AI-generated voices as "artificial" voices under robocall
+rules. **Disclosure costs three seconds, removes the entire ethical objection, and converts your
+biggest liability into an Impact talking point.**
+
+#### Block 2 — Objective and BATNA
+
+```
+Target ₹{{targetPriceInr}}. Walk-away ₹{{walkAwayInr}}.
+If they will not go below the walk-away price, thank them politely and end the call.
+```
+
+#### Block 3 — Anti-anchoring
+
+```
+Ask THEIR rate first. Never state your budget before they name a number.
+Never accept the first price.
+```
+
+#### Block 4 — Concession ladder
+
+```
+Make at most 3 counter-offers.
+First counter ≈ 80% of their opening. Then 88%. Then 94%.
+Never move twice without them moving once.
+```
+
+#### Block 5 — Cross-call leverage · **the money shot**
+
+Injected **only** from actual Convex rows:
+
+```
+{{#priorQuotes}}
+A real competing quote exists — you may cite it:
+"{{shop}} में यही ₹{{priceInr}} में मिल रहा है।"
+{{/priorQuotes}}
+```
+
+⚠️ **Hard rule: if `priorQuotes` is empty, the model must state it has no competing quote.**
+A fabricated quote is misrepresentation exposure under CPA 2019 / s.318 BNS, and it is the single
+thing that would turn a clever agent into fraud.
+
+**This is why calls are SEQUENTIAL, not parallel.** Call N is strictly stronger than call N−1
+because it carries a real, verifiable price obtained ninety seconds earlier. Parallelism would buy
+you 90 seconds of wall-clock and cost you the entire product thesis.
+
+#### Block 6 — Close artifact
+
+```
+Before hanging up, obtain:
+  (a) the contact person's name
+  (b) how long the price is held
+  (c) availability
+Confirm all three back to them.
+```
+
+### Style constraints — this is what makes it sound human
+
+- **One question per turn.** Never two.
+- **Under two sentences per turn.** This is a phone call being fed to TTS — no markdown, no lists,
+  no bullet points, max ~25 words.
+- **Prices in words**, not digits: `तेईस हज़ार पाँच सौ`, never digit-by-digit.
+  *This single detail kills the illusion faster than anything else.* `enable_preprocessing=true` on
+  the TTS handles most of it; the prompt handles the rest.
+- **Occasional filler while thinking**: `एक मिनट रुकिए`, `अच्छा`, `हाँ जी`.
+- **Register: deferential but savvy.** Not a call-centre robot.
+
+### Guardrail block — verbatim, non-negotiable
+
+```
+1. You are an AI assistant. If asked whether you are human, say no, immediately and plainly.
+2. You have no human name. Never invent one. State the customer's FIRST name only —
+   never their phone number, address, or any other detail.
+3. Never claim to represent a company, brand, government body, or named real person.
+4. Never state a competing price that was not actually collected on an earlier call this session.
+5. Never confirm, book, reserve, or commit to pay. Say: "I'll pass this to the customer,
+   they'll confirm directly."
+6. Never ask for or accept OTP, UPI ID, card details, bank details, or Aadhaar.
+7. If they object, ask you to stop, or sound annoyed: apologise in ONE sentence, say you
+   won't call again, and end the call. Do not persuade.
+8. Be warm. Never pressure, never guilt, never imply urgency that isn't real.
+```
+
+**"Are you a bot?" / "क्या आप रोबोट हैं?"** — the answer is scripted, not generated:
+
+> जी हाँ, मैं एक AI असिस्टेंट हूँ, {{userFirstName}} जी की तरफ़ से बात कर रहा हूँ।
+> अगर आप चाहें तो मैं उन्हें बोल दूँ कि वो खुद कॉल करें?
+>
+> *(Yes, I'm an AI assistant calling for {{userFirstName}}. If you'd prefer, I can ask them to
+> call you directly?)*
+
+### The hangup reflex — regex on every STT final, fires **before** the LLM sees it
+
+```
+/don'?t call|stop calling|remove my number|not interested|who is this|is this a robot|
+ कॉल मत|फ़?ोन मत|परेशान|नंबर हटा/i
+```
+
+→ speak `BOW_OUT` → hang up within 2 seconds → insert a `dnc` row → mark the recording for deletion.
+
+**Demo this on stage.** A judge watching an AI voluntarily hang up and blacklist a number is worth
+more than a fifth negotiation feature.
+
+### Call state machine
+
+```
+greet → disclose → [consent?] → qualify → anchor → counter ×≤3 → close → confirm → thank
+                        │
+                        └── refused ──▶ BOW_OUT ──▶ hangup + dnc row
+```
+
+**Guards:** `maxTurns = 16` · `maxCallDurationSec = 240` · walk-away breach → exit politely ·
+silence >8s → one re-prompt, then close.
+
+### Latency budget — a phone call dies above ~1.5s of dead air
+
+| Stage | Budget |
+|---|---|
+| STT endpointing (END_SPEECH → final) | 250–400 ms |
+| sarvam-30b first token (`max_tokens=100`) | 300–500 ms |
+| Bulbul first audio byte (`min_buffer_size=30`) | 200–350 ms |
+| PCM→mulaw + Twilio network | 100–150 ms |
+| **Total perceived turn latency** | **~0.9–1.4 s** ✅ |
+
+**If you're over budget, cut in this order:** (1) drop `max_tokens` to 60, (2) shorten the system
+prompt, (3) insert a filler phrase immediately on END_SPEECH so the line is never silent while the
+LLM thinks, (4) turn off `codemix` mode.
+
+**Use sarvam-30b for in-call turns and sarvam-105b only for offline extraction and summary.** Never
+put 105B in the live loop.
+
+### Structured extraction — where most implementations break
+
+`sarvam-105b`, `response_format={"type":"json_object"}`, `max_tokens=4096`, `reasoning_effort=None`.
+
+```json
+{
+  "openingQuoteInr": 27500,
+  "finalQuoteInr": 24200,
+  "quoteTurnSeq": 11,
+  "terms": "free delivery, 1 year warranty",
+  "contactName": "Rakesh",
+  "holdUntil": "Tuesday 6 PM",
+  "closed": true,
+  "willingnessToNegotiate": "high",
+  "confidence": 0.9
+}
+```
+
+**The extraction prompt must handle Indian number expressions explicitly.** This is the #1 silent
+failure. Give the model these mappings in the prompt:
+
+| Spoken | Value |
+|---|---|
+| `पचीस हज़ार` / `pachees hazaar` / `25k` | 25000 |
+| `साढ़े चौबीस हज़ार` / `saade chaubees hazaar` | 24500 |
+| `चौबीस हज़ार पाँच सौ` | 24500 |
+| `सवा लाख` | 125000 |
+| `डेढ़ लाख` | 150000 |
+| `24,500` / `24500/-` / `Rs 24.5k` | 24500 |
+
+Instruct: *"Return integers in rupees. `साढ़े X` = X + 0.5. `सवा X` = X × 1.25. `पौने X` = X × 0.75.
+`डेढ़` = 1.5. If no price was quoted, return null — never guess."*
+
+### Post-call summary — the 4 lines a human actually reads
+
+```
+✅ Gupta Home Appliances — ₹23,500  (was ₹26,000, −10%)
+   250L Samsung, free delivery, 1yr warranty
+   Ask for Rakesh · held till Tue 6 PM
+   📞 4m 12s · Hindi
+```
+
+### Failure branches — the literal spoken response for each
+
+| Situation | Response |
+|---|---|
+| **No answer** (12s ring) | Mark `no_answer`, move to next vendor silently |
+| **IVR / voicemail** | Detect a >10s uninterrupted stream with no turn-taking → hang up, mark `no_answer`. **Never leave a voicemail.** |
+| **Wrong number** | *"माफ़ कीजिए, ग़लती से लग गया। धन्यवाद!"* → hangup |
+| **"We don't sell that"** | *"ठीक है जी, समझ गया। धन्यवाद, आपका दिन शुभ हो!"* → hangup, mark `closed:false` |
+| **Annoyed / hostile** | ONE apology sentence → hangup → `dnc` row |
+| **"Remove my number"** | *"बिलकुल, माफ़ कीजिए। दोबारा कॉल नहीं आएगा।"* → hangup → `dnc` row **permanently** |
+| **Long silence (>8s)** | One re-prompt: *"हैलो, आप सुन रहे हैं?"* → then close |
+| **Language outside TTS_11** | Do **not** attempt to switch. Continue in Hindi or English, log `detectedLangs`. Failing to guard this crashes your flagship feature live. |
+
+---
+
+## 14. DASHBOARD
+
+**Stack:** `get-convex/template-react-vite-shadcn` → Vite + React + Convex + shadcn/ui + Tailwind.
+Deploy to Vercel. Do not debate dark mode; ship dark.
+
+**Three panels:**
+
+```
+┌──────────────┬────────────────────────────┬──────────────────┐
+│ MISSIONS     │  LIVE TRANSCRIPT           │  DEAL COMPARISON │
+│ (left rail)  │                            │                  │
+│              │  🔴 CALL IN PROGRESS       │  Sharma    ₹24.2k│
+│ ▸ Fridge     │  ─────────────────────     │  Gupta ★   ₹23.5k│
+│   Karol Bagh │  🤖 नमस्ते! मैं…           │  KB Digital ₹25.9k│
+│   ₹3,200 ✓   │  👤 हाँ बोलिए              │                  │
+│              │  🤖 फ्रिज का रेट क्या है?   │  SAVED ₹3,200    │
+│ ▸ Goa hotel  │  👤 सत्ताईस हज़ार          │  6m 40s          │
+│   ₹1,800 ✓   │  🤖 अभी Nehru Place में…   │                  │
+│              │     ▌                      │  [▶ play call]   │
+└──────────────┴────────────────────────────┴──────────────────┘
+```
+
+### The live transcript component
+
+Subscribe to **two** queries and render `[...turns, partial]`:
+
+```tsx
+const turns   = useQuery(api.transcripts.turns,       { token, callId });
+const partial = useQuery(api.transcripts.livePartial, { callId });
+```
+
+Per turn: speaker avatar (🤖 agent / 👤 vendor), the text in native script, a **romanised line
+underneath** (from Sarvam transliterate), a language badge when it changes, and a timestamp.
+The partial gets a blinking cursor.
+
+### The Negotiation Arc — your Delight component
+
+Not a price table. A **visual arc per vendor**:
+
+```
+Sharma Electronics
+  ₹27,500 ─────────────╮
+                       ╰──▶ ₹24,200   −12%   ●───● 11 turns · 4m 12s
+```
+
+Struck-through opening → animated drop → final. Clicking the final price **scrolls the transcript to
+`quoteTurnSeq`** — the exact line where the price was agreed. That link between number and evidence
+is what makes it feel real rather than generated.
+
+### Language / voice picker
+
+`api.voice.preview({speaker, lang})` is a Convex **action** returning base64 WAV.
+⚠️ **Never call Sarvam from the browser** — the key would be in the client bundle.
+
+Ship **6–8 curated voices**, not 39. Include an **"Auto-detect ★"** option and make it the default.
+
+### Judge-facing contact-check panel
+
+A small collapsible strip on each call: `phoneE164 · twilioCallSid · durationSec · <audio src=recordingUrl>`.
+
+They were going to ask anyway. Put it on screen before they do.
+
+### Demoing on a projector
+
+18px minimum body text · `tabular-nums` on every price · dark theme · high-contrast speaker colours ·
+**no animations longer than 200ms**. Test at 15:30 on the actual projector.
+
+---
+
+## 15. COMPLIANCE AND SAFETY
+
+Not a legal opinion — an implementable posture that is defensible on stage.
+
+### Hard constants, quotable
+
+| Rule | Value |
+|---|---|
+| Businesses per request | ≤ 3 |
+| Dials per request | ≤ 5 |
+| Attempts per business | 1 per 24h |
+| **Dials per originating number** | **≤ 15 / 24h** (TCCCPR "Bulk" trips above 20 — say that number out loud) |
+| Dials per 7 days | ≤ 60 (Bulk trips above 100) |
+| Call window | **10:00–20:00 IST** (Schedule-II default-off bands are 21:00–10:00) |
+| Max call duration | 240 s |
+
+**Blocked prefixes — hardcode and reject:**
+`100 101 102 103 108 112 1091 1098 139 181 1930 1800 1860 140 1600`
+
+### The four non-negotiables
+
+1. **Disclosure inside the first 4 seconds.** Logged to `consentEvents` with the exact wording used.
+2. **A permanent global DNC list**, honoured across all users, written the instant anyone objects.
+3. **Never fabricate a competing quote.** Cite only prices in the `calls` table from this session.
+4. **Never transact.** No booking, no payment, no OTP, no UPI.
+
+### What to say to judges — one slide, thirty seconds
+
+> "Three things make this the responsible version. Every call opens by saying it's an AI and that
+> it's recording — here's the consent log. Every number that objects goes on a permanent do-not-call
+> list — here's that table, and you'll see it get a new row in the demo. And we cap at fifteen dials
+> a day per number, which keeps us under TRAI's bulk-communication threshold of twenty. A human taps
+> 'call' before anything dials. We never book and we never pay."
+
+**Then offer to call a judge's phone.** They were going to contact-check you anyway; pre-empting it
+converts a threat into your closing flourish.
+
+---
+
+## 16. WORKSTREAM SPLIT — five lanes, frozen contracts
+
+### Governing rules — stated at kickoff, enforced by the integrator
+
+- Convex is the **only** shared surface. No lane imports another lane's code. No lane runs another
+  lane's process.
+- **Directory ownership is exclusive.** Touching another lane's directory is a merge-blocking offence.
+- Contracts below are **frozen**. A missing field goes into `meta: v.any()`.
+- 🚫 **Nobody rewrites the Pipecat example "properly."** An agent will want to at 14:00. Forbidden.
+- 🚫 **Nobody consolidates the bridge into Convex.** It is structurally impossible (§4). Forbidden.
+
+| Lane | Owns (exclusive) | Consumes | Produces |
+|---|---|---|---|
+| **A — Bridge** *(best engineer, human-driven, no solo agent)* | `bridge/` | nothing | HTTP POSTs to Convex; `POST /call` endpoint |
+| **B — Convex** | `convex/` | nothing | the schema + every query/mutation others read |
+| **C — Telegram** | `convex/telegram.ts`, `convex/intent.ts` | Convex client | `missions` rows; voice-note summaries |
+| **D — Dashboard** | `web/` | Convex queries only | the projector artifact |
+| **E — Leads / Prompt / Demo** | `leads.json`, `prompts/`, demo assets | reads Convex | seed data, the prompt pack, the fallback video |
+
+### Contract 1 — Convex → Bridge
+
+```
+POST https://<NGROK>/call          header: x-bridge-secret: $BRIDGE_SECRET
+
+{ callId, missionId, phoneE164, language, voice, userFirstName,
+  brief: { category, locality, constraints[], targetPriceInr, walkAwayInr },
+  priorQuotes: [ { shop, priceInr } ] }
+
+→ 202 { twilioCallSid }   |   4xx { error }
+```
+
+### Contract 2 — Bridge → Convex
+
+All POST, all carry `x-bridge-secret`, all **fire-and-forget — never awaited on the audio thread.**
+A slow POST becomes dead air on a live phone call.
+
+```
+POST {CONVEX_SITE}/ingest/turn
+  { callId, role:"agent"|"vendor", text, langCode?, langProbability?,
+    sarvamRequestId?, tsMs, final:true }
+
+POST {CONVEX_SITE}/ingest/status          ← Twilio StatusCallback posts here directly too
+  { callId?, CallSid, CallStatus, CallDuration?, RecordingUrl? }
+
+POST {CONVEX_SITE}/ingest/outcome
+  { callId, openingQuoteInr, finalQuoteInr, quoteTurnSeq, terms,
+    contactName, holdUntil, closed, detectedLangs:[] }
+
+POST {CONVEX_SITE}/ingest/langswitch
+  { callId, fromLang, toLang, confidence, atMs }
+```
+
+⚠️ **Twilio posts `application/x-www-form-urlencoded`, not JSON.** `await req.json()` throws.
+Use `new URLSearchParams(await req.text())`.
+
+⚠️ **`.convex.site`, not `.convex.cloud`.**
+
+### Contract 3 — Convex → Dashboard
+
+Lane B publishes, Lane D consumes, nothing else.
+
+```
+api.missions.list      ({token})                → Mission[]
+api.missions.get       ({token, missionId})     → { mission, calls[], vendors[] }
+api.transcripts.turns  ({token, callId})        → Turn[]              (cold, finals only)
+api.transcripts.livePartial ({callId})          → {text, role} | null (hot, one doc)
+api.calls.comparison   ({token, missionId})     → { calls[], winnerId, savedInr }
+api.voice.preview      ({speaker, lang})        → base64 wav   ← ACTION, never call Sarvam from the browser
+```
+
+### Contract 4 — Convex → Telegram
+
+```
+internal.telegram.send({ tgUserId, text?, voiceBase64? })
+internal.auth.issueDashboardLink({ tgUserId }) → "https://<app>/?t=<token>"
+```
+
+### Contract 5 — Auth
+
+One path, 20 minutes, already decided in §12.
+
+### Env — one frozen list, `.env.example` committed at kickoff
+
+```
+SARVAM_API_KEY        TWILIO_ACCOUNT_SID    TWILIO_AUTH_TOKEN    TWILIO_US_NUMBER
+NGROK_HOST            CONVEX_URL            CONVEX_SITE_URL      BRIDGE_SECRET
+TELEGRAM_BOT_TOKEN    TG_WEBHOOK_SECRET     DASHBOARD_URL        GOOGLE_PLACES_KEY
+STT_MODE=codemix      ALLOW_INTERRUPTIONS=true
+```
+
+---
+
+## 17. HOUR BY HOUR
+
+### First 15 minutes — ALL HANDS, NO CODE
+
+Integrator creates: repo, Convex project (`npm create convex@latest`, GitHub OAuth, no card),
+`schema.ts` pasted verbatim from §9, `.env.example`, @BotFather bot. **Every laptop does the Convex
+GitHub login now, not at 14:00.** Contracts pasted into this file. Keys in a pinned message.
+
+| Time | A · Bridge | B · Convex | C · Telegram | D · Dashboard | E · Leads/Prompt/Demo |
+|---|---|---|---|---|---|
+| **+0:15** | **G0** Twilio upgrade · US number · Geo Permissions IN (low **and** high) | schema push, `http.ts` skeleton | @BotFather, webhook → `.convex.site` | clone template, `npm i`, build | Sarvam signup + **₹2,000 top-up** |
+| **+0:30** | **G1** curl ring test | ingest endpoints + shared secret | text intake → `missions` | 3-panel shell | **`leads.json` — 15–20 hand-verified real businesses** |
+| **+0:50** | **G2** ngrok + `<Connect><Stream>`, log frames | `startMission`, `listMissions`, `getMission` | intent via sarvam-30b `json_object` | seed script: 2 finished negotiations | ″ |
+| **+1:15** | **⚑ G3 GO/NO-GO — Bulbul audible on a real phone** | `applyBatch` (4 Hz, one hot doc) | | live transcript wired to seed data | Places `searchText` + field mask |
+| **+1:45** | **G4** Saaras inbound → terminal | `dial` action + 500 ms stagger + `complianceGate` | **voice-note intake** (Saaras batch) | dashboard demoable standalone ✅ | **hard cut on Places if broken** |
+| **+2:15** | **G5** 30b in the loop — it counter-offers | `onProviderStatus`, scheduler chain, `reapStuck` cron | live progress (edit one message) | 3 call cards, live status pills | **prompt pack v1 → Lane A** |
+| **+3:00** | `POST /call` endpoint; turns → Convex | `learnedPrefs` memory + `buildContextPrompt` | | quote ticking down live | prompt v2 after hearing a real call |
+| **+3:45** | 105b outcome extraction; recording URL | comparison query + `savedInr` | **Bulbul voice-note summary out** | **Negotiation Arc** | **record the fallback video** |
+| **+4:30** | **3 concurrent calls test** + mid-call language switch | Mayura translate + transliterate | deep link to dashboard | contact-check panel | **test in the actual room on the actual PA** |
+| **+5:15** | buffer / stabilise | buffer | buffer | 18px, dark, `tabular-nums` | rehearse ×3, pre-fill submission |
+| **16:00** | **FREEZE.** Copy fixes only. Integrator holds the merge button. | | | | |
+| **16:10** | **SUBMIT.** | | | | |
+
+**⚑ G3 is the whole project.** If Bulbul audio is not audible on a real phone by 12:30, the
+integrator alone (no committee) switches to Fallback Rung 2 (§10).
+
+**Test 3 concurrent calls by 15:00, not 16:20.** If unstable, demo sequentially — a sequential demo
+that works beats a parallel demo that crashes. *(And sequential is the correct product design
+anyway — see §13 Block 5.)*
+
+---
+
+## 18. DEMO SCRIPT — 3 minutes
+
+**Setup before you speak:** dashboard on the projector (dark, 18px) · phone on a **wired earbud or
+lav into the room PA, never open speakerphone** · Telegram on a second window · fallback video paused
+in a muted tab at the right frame · DND on · `caffeinate -disu` · Slack quit.
+
+**0:00–0:20 — The stab.** No slides, no team intros, no architecture.
+> "Every Indian negotiates ten times a week and loses every time, because the other side does this
+> for a living and you do it once. Watch."
+
+**0:20–0:45 — Voice in.** Send a Telegram **voice note in Hindi**: *"Karol Bagh mein 250 litre ka
+fridge chahiye, 25 hazaar se kam."* Saaras transcribes live on screen, the intent card fills, three
+real shops with real phone numbers appear. **Read one number out loud** — *"that's a real shop, call
+it after the demo."*
+
+**0:45–1:05 — Dial.** One tap. Three cards go to "dialing". One connects. **The room hears a
+stranger say "Hello?"** That sound is what separates you from every browser demo in the building.
+
+**1:05–2:10 — THE CALL. Say nothing.** Let the room hear a Hindi negotiation while the transcript
+types itself in Devanagari, turn by turn. Two independent channels agreeing in real time is what
+makes it unfakeable.
+
+> **⭐ The moment lands ≈1:35.** The shopkeeper counter-offers. The agent doesn't accept — it says,
+> in Hindi:
+>
+> *"देखिए, अभी मैंने Nehru Place में बात की, वहाँ same model तेईस हज़ार पाँच सौ में मिल रहा है।
+> आप बाईस आठ सौ कर दीजिए तो मैं अभी confirm कर देता हूँ।"*
+>
+> — quoting a **real price it obtained on a different phone call ninety seconds earlier**, with the
+> dashboard highlighting the source call.
+>
+> Not "an AI made a phone call." **"An AI ran a live reverse auction over the PSTN and used one
+> stranger against another."** Point at the screen and say nothing for three seconds.
+
+**2:10–2:35 — Land it.** Agent gets a name and a hold-until time, closes, hangs up. Comparison
+resolves: three shops, three arcs, one winner. **"₹3,200 saved. 6 minutes 40 seconds of your life
+back."** Telegram pings with a Bulbul voice note in Hindi. You never typed a word.
+
+**2:35–2:50 — Memory + the switch.** *"It remembers."* Scroll the left rail to an earlier
+negotiation; show that today's brief already carried *"budget usually ₹4k, prefers AC, speaks
+Hindi."* If a language switch fired, show the `langSwitches` row: **"it changed language because he
+did."**
+
+**2:50–3:00 — The invitation.**
+> "Every transcript, every number, every recording is in Convex right now — spot-check any row.
+> Here's the consent log, here's the DNC list, here's the fifteen-calls-a-day cap that keeps us
+> under TRAI's bulk threshold. And if you give me your number, it'll call you."
+
+**Offer to call a judge.** Keep it as a one-field form on screen.
+
+### Fallback tiers — all armed by 15:00
+
+| Tier | What | Note |
+|---|---|---|
+| **0** | Real consented business | primary |
+| **1** | Teammate in the corridor on a real phone | genuine PSTN, identical code path — **say so, nobody deducts** |
+| **2** | The 90-second recorded video | judges forgive a recording; they don't forgive silence |
+| **3** | The Convex table with 8–12 real completed negotiations accumulated all day | `record=True` from G1 onward generates this asset for free |
+
+**Never debug in front of judges.** One failed attempt, one sentence, next tier.
+**Dead-air budget: 5 seconds.**
+
+---
+
+## 19. CUT LIST — say these out loud at kickoff
+
+Auth/login/multi-user · booking or payment · inbound calls · WhatsApp · a real domain · mobile
+responsive · tests · CI · vector search / RAG / embeddings · multi-turn clarification in Telegram
+(one message in, go) · error-recovery UI (a red "failed" pill is enough) · voice cloning · custom VAD
+tuning past one knob · admin panels · landing page · Docker · retries and queues · analytics ·
+dark-mode debate · a README over 10 lines · pronunciation dictionary · anything containing the word
+"scalable" · **rewriting the Pipecat example properly** · **consolidating the bridge into Convex** ·
+**Exotel/Plivo-India/Ozonetel/Knowlarity signup flows**.
+
+**The last three are the dangerous ones.** An agent will drift into each of them between 13:00 and
+15:00.
+
+**Promote to MUST if G5 lands early:** cross-call price citation. It is the single highest-scoring
+feature in the build and it is one field (`priorQuotes`) in the prompt. **Wire it before any CSS.**
+
+---
+
+## 20. TOP 5 RISKS
+
+**1 · Twilio fails to upgrade, or upgrades and gets fraud-held.**
+`<Stream>` and `<Record>` are blocked TwiML verbs on trial — there is no half-working mode, the
+project is simply dead. RBI disables international transactions by default on new Indian cards and
+3DS mismatches decline silently. Fraud holds have **no same-day appeal**.
+→ *Enable intl in the bank app before you start. Two cards, different banks. Ring test within 5
+minutes of upgrading. **Warm a Plivo signup in parallel from T+0** — the ring test detects death
+without curing it.*
+
+**2 · Sarvam credits exhausted mid-afternoon.**
+₹100 free ≈ 8–12 calls. Six hours of iterative voice-picking and STT debugging burns it before lunch,
+and nobody plans for it. Discovering it at 15:00 costs twenty minutes of confused 403s.
+→ *₹2,000 top-up at T+0:10. Same person, same breath as the Twilio card.*
+
+**3 · Echo / self-interruption on stage.**
+Phone speakerphone → room PA → phone mic → VAD fires → the agent interrupts itself → cascade. This
+kills more voice demos than any API, and a 200-person hall is a continuous VAD trigger.
+→ *Wired earbud or lav into the PA, never open speakerphone. `high_vad_sensitivity=False`.
+`ALLOW_INTERRUPTIONS` as an env flag flippable in five seconds. **Test in the actual room on the
+actual PA at 15:30.***
+
+**4 · Burst-rejected Sarvam sockets kill the parallel-call feature.**
+Three concurrent calls open six sockets simultaneously; Sarvam rejects bursts well below the stated
+concurrency ceiling and closes with code 1003. Separately, 3 calls × one LLM turn per ~6s approaches
+the **40 req/min** chat ceiling.
+→ *500ms stagger between dials (two lines). Cap concurrency at 3. One LLM call per turn, no retry
+loops. Test three concurrent calls at 15:00.*
+
+**5 · Nobody answers, or answers and hangs up on a US caller ID.**
+A +1 number calling a Delhi shop on a Sunday reads as spam. **This is the highest-probability live
+failure and it is social, not technical.** An Indian caller ID is unobtainable at any price.
+→ *Pre-arranged consent at lunch (valid 7 days per TRAI Feb 2025), logged in `consentEvents`.
+Disclosure inside the first 4 seconds. Three dials with a 12s ring budget. Teammate in the corridor
+as a guaranteed pickup. `record=True` all day so Tier 3 is always full.*
+
+**Runner-up, cheap to prevent:** ngrok's URL is baked into your TwiML. **Restarting ngrok silently
+breaks every subsequent call while everything else looks fine.** Free tier gives one auto-assigned
+persistent `*.ngrok-free.dev` — you cannot reserve a custom one, don't go hunting for a paid
+feature. Hardcode it early and **never restart ngrok after 16:00**. Keep `cloudflared` installed;
+venue networks sometimes block one provider and not the other.
+
+---
+
+## 21. OPEN QUESTIONS — each with the experiment that closes it
+
+### Q1 · Do the Pipecat Sarvam service signatures match the docs? **Run this at minute 16.**
+
+Sarvam's official guide writes `SarvamTTSService.Settings(target_language_code="hi-IN")`, while
+Pipecat's own API reference lists the field as `language`. The TTS doc gives the import path
+`pipecat.services.sarvam` while the STT doc gives `pipecat.services.sarvam.stt`. `pipecat-ai` 1.6.0
+is days old. **Resolve empirically before Lane A writes a line:**
+
+```bash
+python -c "
+import inspect
+from pipecat.services.sarvam.stt import SarvamSTTService
+from pipecat.services.sarvam.tts import SarvamTTSService
+from pipecat.services.sarvam.llm import SarvamLLMService
+print(inspect.signature(SarvamSTTService.__init__))
+print(SarvamSTTService.Settings.model_fields.keys())
+print(SarvamTTSService.Settings.model_fields.keys())
+print(inspect.signature(SarvamLLMService.__init__))"
+```
+
+*Pre-decided fallback:* TTS via `SarvamTTSService`; LLM via
+`OpenAILLMService(base_url="https://api.sarvam.ai/v1", model="sarvam-30b")`; STT via a hand-rolled
+Saaras WS client in a custom `FrameProcessor`. **Budget 30 minutes for this specific unknown, and
+check it at minute 16, not at 13:00.**
+
+### Q2 · Can an Indian-billing account buy a US local number without a regulatory bundle?
+
+Twilio's US regulatory page 404s and the Regulatory FAQ is non-committal.
+*60-second experiment at T+20:* Console → Phone Numbers → Buy, set **Address Requirement = None**,
+filter US local, attempt purchase. **If blocked, buy a US toll-free or a UK/Canada local instead** —
+any non-Indian number satisfies the India rule.
+
+### Q3 · Does `mode="codemix"` degrade sarvam-30b's comprehension vs `transcribe`?
+
+Sarvam's own IVR guide recommends `transcribe` for IVR; we want `codemix` for Hinglish fidelity.
+This is an empirical quality question, not a documentation one.
+*10-minute experiment right after G5:* run the same 60-second scripted haggle twice, once per mode,
+and diff the counter-offers. `STT_MODE` is already an env var. If `codemix` produces worse
+counter-offers, flip it and keep codemix only for the **displayed** transcript.
+
+### Q4 · Does `TTSUpdateSettingsFrame` swap the Bulbul voice mid-connection without an audible gap?
+
+Documented as supported and the Sarvam config message auto-flushes the buffer, but the perceptual
+result on a live PSTN leg is unverified.
+*10-minute experiment at 15:00:* call a teammate, have them switch Hindi→Tamil mid-sentence, listen
+for the gap. **If it stutters, downgrade to a *logged* `langSwitches` row plus a dashboard badge
+("detected Tamil") without actually switching the voice** — you keep 80% of the judging value at zero
+live risk.
+
+### Q5 · Has TRAI's TCCCPR Third Amendment been notified in the Gazette?
+
+Draft 13 Mar 2026, counter-comments closed 27 Apr 2026. If notified, A2P/robo-call pre-declaration to
+the originating access provider becomes a live duty and undeclared calls are auto-treated as UCC.
+Unverified as of today.
+*Not resolvable in 10 minutes and not on the critical path.* Assume it is coming: the ≤15 dials/24h
+cap, the disclosure, and the consent log are defensible under either version. Put a
+`meta.a2pDeclared` flag in the schema and move on.
+
+### Q6 · Sarvam's Acceptable Use Policy on outbound calling.
+
+`sarvam.ai` returns 403 to automated fetchers, so no researcher could read it. **A platform-ToS
+violation is the one thing that could kill your API key mid-demo.**
+*3-minute experiment:* open the ToS from the logged-in Sarvam dashboard in a browser and skim for
+outbound-calling and voice-cloning clauses before 12:00. We use stock Bulbul voices only and never
+clone an identifiable person, which already covers the likely clause.
+
+### Q7 · Google Places free-tier shape in 2026.
+
+The old flat $200/month credit was replaced by per-SKU monthly free allowances in March 2025, and
+phone numbers sit in the **Enterprise** SKU. Exact current allowance unverified.
+*2-minute check in the GCP console billing page.* Either way `leads.json` (§11) makes this
+non-blocking — **build `leads.json` first.**
+
+---
+
+## APPENDIX — sources
+
+- Sarvam × Twilio voice agent (official): `https://docs.sarvam.ai/api/integration/build-voice-agent-with-twilio`
+- Sarvam call-analytics pipeline (official): `https://docs.sarvam.ai/api/cookbook/guides/call-analytics-pipeline`
+- Sarvam docs, machine-readable: `https://docs.sarvam.ai/llms-full.txt` · append `.md` to any docs URL
+- Sarvam MCP server: `https://docs.sarvam.ai/_mcp/server`
+- Sarvam cookbook: `https://github.com/sarvamai/sarvam-ai-cookbook`
+- Pipecat outbound example: `https://github.com/pipecat-ai/pipecat-examples` → `twilio-chatbot/outbound/`
+- Convex Vite+shadcn template: `https://github.com/get-convex/template-react-vite-shadcn`
+- Buildathon rules and rubric: `https://growthx.club/docs/sarvam`
+
