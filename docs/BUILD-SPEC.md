@@ -16,6 +16,24 @@ Build sprint 10:30–16:30 IST · **Freeze 16:00 · Submit 16:10** (not 16:29)
 
 Five things in `PRD.md` / `ARCHITECTURE.md` will cost you time if followed as written.
 
+> ### 🔴 BEFORE ANY OF THAT — two Sarvam defaults that silently kill the demo
+>
+> Both verified against primary docs today. Untuned, turn latency is **~3.4 s** and the call is
+> dead. Tuned, **~1.27 s**. Full detail in §6.
+>
+> 1. **`reasoning_effort` is ON by default** on `sarvam-30b`/`105b`, and **reasoning tokens count
+>    toward `max_tokens`.** With `max_tokens=60–100` for short spoken turns, the model burns the
+>    whole budget thinking and **returns empty content**. Send `"reasoning_effort": null` on every
+>    in-call completion.
+> 2. **Saaras VAD frames are 512 *samples*, not milliseconds.** At Twilio's 8 kHz the default
+>    `negative_frames_count=18` waits **1152 ms of silence** before admitting the vendor stopped.
+>    Run STT at **16000 Hz** (frame halves to 32 ms for free — Pipecat resamples) and cut
+>    `negative_frames_count` to 6. **Saves ~960 ms on every turn.**
+>
+> Also: **use `phonenumbers` (libphonenumber), never a hand-rolled E.164 regex.** Tested on 298 real
+> Indian numbers, the regex *invented valid-looking numbers from corrupt input* — which here means
+> **dialling a stranger.** See §11.
+
 ### ① Wrong Sarvam model names — fix this first, it misroutes every agent
 
 `PRD.md` §5 names **Saarika**, **Sarvam-M**, and **Saaras** as three separate components. That
@@ -367,14 +385,22 @@ from pipecat.frames.frames import TTSUpdateSettingsFrame, LLMRunFrame
 
 stt = SarvamSTTService(
     api_key=SARVAM_KEY,
-    sample_rate=8000,                  # default is 16000 — MUST override for telephony
-    mode="codemix",                    # constructor kwarg, NOT a Settings field
-    settings=SarvamSTTService.Settings(
-        model="saaras:v3",
-        language="unknown",            # ← this is what turns on auto-detection
-        vad_signals=True,
-        high_vad_sensitivity=False,    # False: the demo hall is loud
-    ),
+    model="saaras:v3",
+    mode="transcribe",                 # constructor kwarg, NOT a Settings field. See §8(b).
+    sample_rate=16000,                 # ⚠️ NOT 8000. This is the single biggest latency win
+                                       #    in the whole build — see the VAD note below.
+    settings={
+        "language": "unknown",         # ← this is what turns on auto-detection
+        "vad_signals": True,           # need START_SPEECH for barge-in
+        "negative_frames_count": 6,    # default 18 → 192ms endpoint instead of 1152ms
+        "negative_frames_window": 8,   # default 24
+        "min_speech_frames": 2,
+        "first_turn_min_speech_frames": 4,   # default 8 — vendors answer fast
+        "positive_speech_threshold": 0.6,    # default 0.7 — noisy shops
+        "negative_speech_threshold": 0.45,
+        # Bias the recogniser toward the words we must not misrecognise:
+        "prompt": f"hazaar lakh rupaye GST delivery warranty {CATEGORY} {' '.join(MUST_HAVES)}",
+    },
     keepalive_interval=5.0,            # Sarvam closes idle sockets at 60s
 )
 
@@ -394,7 +420,13 @@ tts = SarvamTTSService(
 
 llm = SarvamLLMService(
     api_key=SARVAM_KEY,
-    settings=SarvamLLMService.Settings(model="sarvam-30b", max_tokens=100),
+    settings=SarvamLLMService.Settings(
+        model="sarvam-30b",
+        max_tokens=100,
+        reasoning_effort=None,   # ⚠️⚠️ MANDATORY. See the box below. Without this your
+                                 #    agent returns EMPTY STRINGS on a live phone call.
+        temperature=0.4,
+    ),
 )
 
 task = PipelineTask(
@@ -411,6 +443,50 @@ task = PipelineTask(
 WebSocket only accepts `wav | pcm_s16le | pcm_l16 | pcm_raw` inbound — mulaw is not accepted, so a
 decode is unavoidable regardless. `TwilioFrameSerializer` owns both conversions.
 
+### ⚠️ THE TWO DEFAULTS THAT WILL KILL YOUR DEMO
+
+Both verified against Sarvam's primary docs today. Untuned, your turn latency is **~3.4 seconds** and
+the call is dead. Tuned, it is **~1.27 s**. Neither fix takes more than a minute to apply.
+
+#### ① `reasoning_effort` is ON by default — and it can return *empty content*
+
+The `sarvam-30b` and `sarvam-105b` model pages both state reasoning is **enabled by default**, and —
+the part that kills you — **reasoning tokens count toward completion tokens**. Sarvam's own docs warn:
+*"a small max_tokens can be consumed entirely by reasoning."*
+
+Your in-call turns cap `max_tokens` at 60–100 to keep spoken replies short. **The model will happily
+burn that entire budget thinking and emit nothing at all.** You will see a silent phone call and an
+LLM that "works fine" in curl with a bigger token cap.
+
+> Send `"reasoning_effort": null` explicitly on **every in-call completion**. Not "low". `null`.
+
+*(Docs conflict on the default — the chat-completions parameter reference says `medium`, the model
+pages say `low`. It doesn't matter: it's on either way.)*
+
+Note the side effect: temperature defaults differ by mode (0.5 with reasoning, 0.2 without), so set
+`temperature` explicitly too.
+
+#### ② Saaras VAD frames are measured in SAMPLES, not milliseconds
+
+> *"One frame is 512 audio samples — 32 ms at 16 kHz, 64 ms at 8 kHz."* — Sarvam streaming STT guide
+
+Default `negative_frames_count` is **18**. Twilio gives you 8 kHz. So the naive path waits
+**18 × 64 ms = 1152 ms of silence** before it will even admit the vendor stopped talking — more than
+two-thirds of your entire conversational budget, spent before the LLM is called.
+
+Two fixes that compound:
+
+- **Run STT at 16000 Hz, not 8000.** Because the frame is defined in *samples*, upsampling halves it
+  to 32 ms **for free**. Pipecat resamples for you. The docs independently call 16 kHz the preferred
+  rate. This is why §6 sets `sample_rate=16000` on the STT while the *pipeline* stays at 8000.
+- **Cut `negative_frames_count` 18 → 6** and `negative_frames_window` 24 → 8.
+
+6 × 32 ms = **192 ms**. That saves ~960 ms on *every single turn*.
+
+⚠️ Tradeoff: 6 frames is aggressive and will cut in when a vendor pauses mid-thought. **If you hear
+the agent interrupting during your first test call, step to 8 (256 ms) and re-test.** Try
+`high_vad_sensitivity=true` before touching the fine-grained params.
+
 ---
 
 ## 7. SARVAM API SURFACE — the eight surfaces
@@ -424,8 +500,8 @@ debugging a 401 you'll never see.
 | ① | **Streaming STT** (phone leg) | `wss://api.sarvam.ai/speech-to-text/ws` | `model=saaras:v3`, `language-code=unknown`, `mode=codemix`, `sample_rate=8000`, `input_audio_codec=pcm_s16le`, `vad_signals=true`, `high_vad_sensitivity=false` |
 | ② | **Batch STT** (Telegram voice note) | `POST https://api.sarvam.ai/speech-to-text` | multipart `file` + `model=saaras:v3`, `language_code=unknown`. Accepts OGG/Opus directly. **30s cap.** |
 | ③ | **Streaming TTS** (phone leg) | `wss://api.sarvam.ai/text-to-speech/ws?model=bulbul:v3` | `target_language_code`, `speaker`, `speech_sample_rate=8000`, `pace=1.0`, `min_buffer_size=30`, `enable_preprocessing=true` |
-| ④ | **Chat — live loop** | `POST https://api.sarvam.ai/v1/chat/completions` | `model=sarvam-30b`, `max_tokens=100`, `temperature=0.4` |
-| ⑤ | **Chat — extraction** | same | `model=sarvam-105b`, `response_format={"type":"json_object"}`, `max_tokens=4096`, `reasoning_effort=None` |
+| ④ | **Chat — live loop** | `POST https://api.sarvam.ai/v1/chat/completions` | `model=sarvam-30b`, `max_tokens=100`, `temperature=0.4`, **`reasoning_effort=null`** ⚠️ |
+| ⑤ | **Chat — extraction** | same | `model=sarvam-105b`, `response_format={"type":"json_object"}`, `max_tokens=4096`, **`reasoning_effort=null`** ⚠️ |
 | ⑥ | **REST TTS** (Telegram voice note, voice preview) | `POST https://api.sarvam.ai/text-to-speech` | `{text, target_language_code, speaker, model:"bulbul:v3", sample_rate:22050}` → `audios[0]` base64 |
 | ⑦ | **Translate (Mayura)** + **Transliterate** | `POST /translate`, `POST /transliterate` | Hindi transcript → English toggle; romanised line under Devanagari |
 | ⑧ | **Batch diarized analytics** *(stretch)* | Batch STT job | `saaras:v3`, `mode=translate`, `with_diarization=True` → `SPEAKER_00/01` + `start_time_seconds` → talk-time metrics per speaker |
@@ -454,6 +530,7 @@ simran   kavya  ishita  shreya  anand  tanya  suhani  rupali
 | TTS WebSocket concurrency | 30 (bulbul:v3 — halved vs v2) |
 | bulbul:v3 REST | 30 req/min |
 | **sarvam-30b / 105b chat** | **40 req/min** ← the real ceiling for 3 parallel calls |
+| **`max_tokens` ceiling** | **Plan-capped: Starter 4096 · Pro 8192 · Business 64000.** Fine for in-call turns at 60–100; confirm your tier before designing the extraction call, since 105B Starter is also 4096. |
 | Burst behaviour | **Sockets opened in a burst are rejected below the stated ceiling, close code 1003. Space ≥300ms. We use 500ms.** |
 
 Pricing: STT ₹30/hr · bulbul:v3 ₹30/10K chars · 30B ₹2.5 per 1M tok · 105B ₹10 per 1M tok.
@@ -487,16 +564,28 @@ and `language_probability` (0–1).
 specific code and detection is skipped and probability comes back null. Detection is per-utterance,
 so no reconnection is needed when the speaker changes.
 
-### (b) Code-mixed
+### (b) `transcribe` vs `codemix` — ship `transcribe`, revisit only if you have time
 
 `mode="codemix"` returns Indic words in native script and English words in Latin:
 
 > `मेरा phone number है 9840950950`
 
-That is exactly how a Karol Bagh shopkeeper actually speaks, and it demos visibly better than a
-flattened transcript. Sarvam's own IVR guide recommends plain `transcribe` for IVR; we deliberately
-override because **Hinglish fidelity is the domain flex**. Keep `STT_MODE` as an env var so it's a
-one-word rollback if 30B's comprehension degrades (see Q3).
+That is how a shopkeeper actually speaks and it demos beautifully. **But ship `transcribe`.**
+
+**Reason: numerals.** `transcribe` gives native script with the best accuracy on numbers, and in this
+product **the number is the entire deliverable.** A prettier transcript that misreads
+*"चौबीस हज़ार पाँच सौ"* as 24,000 loses you the Job-to-be-done score, which is the 2.5× line.
+Sarvam's own IVR guide also recommends plain `transcribe`.
+
+Keep `STT_MODE` as an env var so it is a one-word flip. If you have spare time, run the Q3 experiment
+and consider using `codemix` **only for the displayed transcript** while `transcribe` feeds the LLM —
+you get the visual flex without risking the extraction.
+
+Also pass the `prompt` param to bias the recogniser toward the words you cannot afford to lose:
+
+```python
+"prompt": f"hazaar lakh rupaye GST delivery warranty {CATEGORY} {' '.join(MUST_HAVES)}"
+```
 
 ### (c) Reply in the detected language
 
@@ -783,7 +872,97 @@ loud scores better than hiding it**.
 
 ## 11. CONTACT DISCOVERY — finding real phone numbers
 
-### DECIDED: Google Places API (New) `searchText`, with a curated `leads.json` as the demo floor.
+### DECIDED: run two tracks from minute zero. OSM seed is the floor; Places is the upgrade.
+
+**This section was rewritten after live testing today.** An earlier draft called OpenStreetMap
+coverage "poor" and made Places the primary. That was wrong for the seed use case: a researcher ran
+an Overpass query today and **pulled 117 real Indian businesses with validated E.164 numbers in
+60 seconds, with no API key, no billing, and no signup.**
+
+| Track | Owner | Time | Risk |
+|---|---|---|---|
+| **A — Google Places (New)** | one person | 20 min | **Blocking.** Billing is a hard gate. |
+| **B — OSM Overpass seed** | one person | 30 min | **Zero.** No key, no billing, no signup. |
+
+**Run B first.** Then `find_vendors()` tries Places and silently falls back to the Convex seed.
+Judges doing database spot-checks see real, dialable +91 numbers either way.
+
+### ⚠️ Measured coverage — this changes your demo
+
+Actual OSM phone-number counts pulled today:
+
+| Query | Usable numbers |
+|---|---:|
+| **Goa hotels** | **82** ✅ |
+| HSR Layout restaurants | 32 ✅ |
+| **Karol Bagh appliance/electronics** | **3** ❌ |
+
+**Your headline "250L fridge in Karol Bagh" demo is your single weakest category.** Small electronics
+dealers barely exist in OSM (~13% phone coverage vs 34.8% for Goa hotels).
+
+> **Lead the demo with the Goa hotel query, not the fridge.** It is the same product, the same code
+> path, and the same negotiation — with 27× the data behind it. Keep the fridge as the second
+> example only if Places billing comes through, or hand-curate ~8 Karol Bagh dealers into
+> `leads.json`.
+
+### Track B — the OSM seeder
+
+⚠️ **`overpass-api.de` was returning HTTP 504 on every request today (26 Jul 2026).**
+`https://overpass.kumi.systems/api/interpreter` worked every time. **The seeder must rotate mirrors
+or Track B dies too.**
+
+Query shape — nodes and ways with a phone tag, inside a bounding box:
+
+```
+[out:json][timeout:60];
+(
+  node["tourism"="hotel"]["phone"](15.2,73.7,15.6,74.0);
+  way ["tourism"="hotel"]["phone"](15.2,73.7,15.6,74.0);
+  node["tourism"="hotel"]["contact:phone"](15.2,73.7,15.6,74.0);
+  way ["tourism"="hotel"]["contact:phone"](15.2,73.7,15.6,74.0);
+);
+out center tags;
+```
+
+Read **both** `phone` and `contact:phone` — Indian POIs use them interchangeably and reading only one
+halves your yield.
+
+### ⚠️ Use libphonenumber. Do NOT hand-roll the E.164 regex.
+
+An earlier draft of this document contained a hand-rolled `toE164()` regex. **Delete it.** Tested
+against 298 real Indian phone strings, `phonenumbers` (libphonenumber) won 296/298 — and both
+differences were the regex **inventing a valid-looking number out of corrupt input.**
+
+In this product, that means **dialling a stranger.** This is a safety bug, not a style preference.
+
+```python
+import phonenumbers
+
+def to_e164(raw: str) -> str | None:
+    try:
+        n = phonenumbers.parse(raw, "IN")
+    except phonenumbers.NumberParseException:
+        return None
+    if not phonenumbers.is_valid_number(n):
+        return None
+    return phonenumbers.format_number(n, phonenumbers.PhoneNumberFormat.E164)
+```
+
+**Never infer mobile-vs-landline from the first digit** — that heuristic is proven false for Indian
+numbering. Use `phonenumbers.number_type(n)` if you need it.
+
+### Track A — Google Places API (New)
+
+⚠️ **Enable "Places API (New)", NOT the legacy "Places API".** Legacy is deprecated and can no
+longer be newly enabled; picking the wrong one yields `SERVICE_DISABLED` and eats 20 minutes of
+confused debugging.
+
+⚠️ **Billing is a hard gate.** Verified live today: no key → `403 PERMISSION_DENIED` *"Method doesn't
+allow unregistered callers"*; bad key → `400 INVALID_ARGUMENT` / `API_KEY_INVALID`.
+
+Free tier: **~7,000 Enterprise-SKU calls/month on India billing** — vastly more than a hackathon
+needs. *(Google replaced the flat $200 credit with per-SKU allowances in March 2025; verify the
+current number in your console rather than trusting any doc.)*
 
 **The endpoint**
 
@@ -835,36 +1014,20 @@ const vendors = places
   .slice(0, 3);
 ```
 
-### E.164 normalisation — do not skip this
+### India coverage on Places
 
-Google returns `"+91 98765 43210"` with spaces, and landlines come back with STD codes like
-`"+91 11 2875 1234"`.
+Better than OSM — Places ingests Google Business Profile, which Indian SMBs actively claim for
+WhatsApp and calls. But **Google publishes no coverage statistic and no credible third-party
+measurement exists**, so treat any specific number as unverified. Expect strong coverage for hotels,
+restaurants and branded retail; weaker for kirana and market-stall vendors.
 
-```ts
-export function toE164(raw: string): string | null {
-  const digits = raw.replace(/[^\d+]/g, "");
-  if (digits.startsWith("+91") && digits.length === 13) return digits;   // +91 + 10 digits
-  if (digits.startsWith("+91") && digits.length >= 12) return digits;    // landline w/ STD
-  if (digits.length === 10) return "+91" + digits;
-  if (digits.startsWith("0") && digits.length === 11) return "+91" + digits.slice(1);
-  return null;                                                           // reject, log gateReason
-}
-```
-
-### India coverage reality
-
-Good for **hotels, restaurants, and branded retail** — those have strong Google Business Profile
-adoption. **Patchy for small kirana, local electronics dealers, and market-stall vendors**, which is
-exactly the segment your fridge demo targets. Plan for a 40–60% phone-number hit rate in that
-segment, which is why the next section is mandatory rather than optional.
-
-### The demo floor: `leads.json` — Lane E, done by 11:45
+### The demo floor: `leads.json` — Lane E, first deliverable
 
 **Build this before you build the Places integration.** It removes the GCP billing screen from your
-critical path entirely.
+critical path entirely. Seed it from the OSM run, then hand-verify.
 
-15–20 hand-verified real businesses, **3 categories × 2 cities**, each personally checked to have a
-working number:
+15–20 businesses, weighted toward the categories that actually have coverage, each personally
+checked to have a working number:
 
 ```json
 [
@@ -888,10 +1051,11 @@ working number:
 
 | Option | Verdict |
 |---|---|
-| **OpenStreetMap / Overpass** | `phone=` / `contact:phone=` tags exist but Indian SMB coverage is poor. Fine as a free supplement, useless as a primary. |
-| **Justdial / IndiaMART scraping** | **Trap.** Aggressive anti-bot, ToS violation, and you will spend 90 minutes on a CAPTCHA instead of on the negotiation prompt. |
-| **Yelp Fusion** | Effectively no India coverage. |
+| **Justdial / IndiaMART scraping** | **Trap.** Cloudflare-class protection plus DPDP Act exposure. A commercial "Justdial Scraper API" industry exists *precisely because* this is not a 6-hour job. |
+| **Yelp Fusion** | India unsupported. Verified. |
 | **Zomato / Swiggy / MMT APIs** | No open public API for phone numbers. |
+
+*(OpenStreetMap is no longer on this list — it was promoted to the primary seed above.)*
 
 ---
 
@@ -953,11 +1117,43 @@ message.voice.file_id
 ```
 
 ✅ **Telegram delivers OGG/Opus and Sarvam STT accepts OGG/Opus directly. No ffmpeg. No transcode.**
-This is confirmed in Sarvam's own Twilio/WhatsApp integration guide.
+Confirmed twice: Sarvam's own integration guide, and the OpenAPI format enum.
 
-⚠️ **The synchronous STT endpoint caps at 30 seconds of audio.** A user rambling for 45s gets an
-error. Either cap the UX ("keep it under 30 seconds") or route long notes to the Batch API. For the
-demo, cap it.
+⚠️ **The REST STT endpoint hard-caps at 30 seconds.** Guard on `msg.voice.duration` **before** you
+spend the API call — write this in the first five minutes of the handler, not after it fails on
+stage:
+
+```ts
+if (msg.voice.duration > 28) {
+  return reply("Thoda chhota rakhiye — 25 seconds mein bata dijiye kya chahiye 🙏");
+}
+```
+
+### The five Telegram traps — all two-line guards, write them the first time
+
+1. ⚠️ **`npx convex env set`, not a local `.env`.** Convex env vars must be set on the **deployed**
+   deployment or `process.env.TELEGRAM_BOT_TOKEN` is `undefined` in production httpActions and every
+   call 404s with a confusing *"Not Found"* from `api.telegram.org`. **This is the single most common
+   way this lane loses 30 minutes.**
+2. ⚠️ **Telegram retries any non-2XX response.** If `handleUpdate` throws inside the *httpAction*
+   rather than inside the *scheduled action*, one bug **re-triggers outbound PSTN calls repeatedly at
+   real money cost.** The try/catch-return-200 wrapper is not optional here.
+3. **`callback_data` has a 64-byte ceiling.** Store an id, not a payload.
+4. **`400: message is not modified`** on the live ticker — compare before editing.
+5. **A voice note outside the TTS-11** (Urdu, Assamese, Maithili) detects fine and then has no voice
+   to answer in. **Sarvam's own judges will absolutely try this.** Explicit fallback map to `hi-IN`.
+
+### Suggested file split — one agent owns the lane end to end
+
+`convex/http.ts` (router + secret + dedupe + schedule, ~60 lines) ·
+`convex/tgApi.ts` (9-method fetch client, ~80) ·
+`convex/telegram.ts` (commands, voice ingest, callback gate, ~250) ·
+`convex/liveCard.ts` (the 1.5s ticker) · `convex/voiceOut.ts` (Bulbul → sendVoice)
+
+**Sequence it:** get `/start` echoing green *first* — a broken webhook at 15:00 is unrecoverable.
+Then the voice-note → STT → brief → confirmation-card path, which is **the highest-scoring 45
+minutes in the entire build** (Sarvam depth 2.5× + Job-to-be-done 2.5× + Delight 1×, all at once).
+The live ticker has zero dependency on the bridge being finished — it just reads rows.
 
 ### Live call updates — one message, edited, debounced
 
@@ -981,10 +1177,17 @@ if (rendered === lastRendered) return;
 `sendVoice` requires **OGG encoded with OPUS**. `sendAudio` requires **MP3 or M4A**. Bulbul REST
 returns **WAV** base64. **Convex cannot run ffmpeg.**
 
-**Decision:** add a 15-line `POST /tts-ogg` endpoint to the bridge (Python, which *can* run ffmpeg),
-have Convex call it, and send the result with `sendVoice`.
+**But Bulbul may be able to emit Opus directly** — `output_audio_codec: "opus"` exists and is
+undocumented as to container. Ogg-Opus → `sendVoice` works; WebM or raw → `sendVoice` 400s.
 
-**If the bridge isn't up, fall back to `sendDocument`** — it accepts any format and always works.
+> **Run this 2-minute probe before 11:00 and hardcode the winning branch:**
+> request `output_audio_codec: "opus"` from Bulbul REST, write the bytes to a file, check the magic
+> bytes (`OggS` = Ogg container), and try `sendVoice`.
+
+**Decision tree:** Ogg-Opus → `sendVoice`, done. Anything else → add a 15-line `POST /tts-ogg` to the
+bridge (Python, which *can* run ffmpeg). **Bridge not up → `sendDocument`**, which accepts any format
+and always works.
+
 Do not spend more than 10 minutes on this; it is a Delight point, not a rubric line.
 
 ### UX and commands
@@ -1088,15 +1291,27 @@ thing that would turn a clever agent into fraud.
 because it carries a real, verifiable price obtained ninety seconds earlier. Parallelism would buy
 you 90 seconds of wall-clock and cost you the entire product thesis.
 
-#### Block 6 — Close artifact
+#### Block 6 — Close artifact, and the **read-back** ⭐
 
 ```
 Before hanging up, obtain:
   (a) the contact person's name
   (b) how long the price is held
   (c) availability
-Confirm all three back to them.
+Then read the whole deal back as ONE clean sentence and ask them to confirm.
 ```
+
+> **This is the single highest-leverage design decision in the build, and it is one extra turn.**
+>
+> *"तो: चौबीस हज़ार पाँच सौ, GST के साथ, मंगलवार डिलीवरी — सही है?"*
+>
+> Most implementations break at extraction because they treat the transcript as **given** and then
+> try to parse a messy four-minute code-mixed conversation. **Engineer the transcript instead.**
+> The read-back guarantees that exactly one high-signal, unambiguous sentence containing every field
+> you need exists in the record. Extraction accuracy on that single line is far higher than on the
+> whole call.
+>
+> It also does double duty as a genuine UX courtesy and as proof-of-agreement for the judges.
 
 ### Style constraints — this is what makes it sound human
 
@@ -1148,40 +1363,80 @@ more than a fifth negotiation feature.
 ### Call state machine
 
 ```
-greet → disclose → [consent?] → qualify → anchor → counter ×≤3 → close → confirm → thank
-                        │
-                        └── refused ──▶ BOW_OUT ──▶ hangup + dnc row
+GREET → DISCLOSE → [consent?] → QUALIFY → ANCHOR → COUNTER ×≤3 → CONCEDE → CLOSE
+                        │                                                    │
+                        │                                              CONFIRM (read-back ⭐)
+                        │                                                    │
+                        └── refused ──▶ BOW_OUT ──▶ hangup + dnc row      THANK
 ```
+
+⚠️ **Do not let the LLM choose its own state.** A deterministic controller picks the state from turn
+count plus whether a price has been extracted. Implement it as a Python dict of allowed transitions
+with per-state turn caps, and inject the current state as a one-line `# CURRENT PHASE` **suffix on
+the system prompt** each turn — do not swap prompts wholesale.
+
+**Tactic → encoding.** Each tactic is a phase rule, not a vibe:
+
+| Tactic | Encoding |
+|---|---|
+| anchor | ANCHOR phase, exactly one turn, must contain `OPENING_ANCHOR` |
+| **cite** | COUNTER phase, **allowed only if `priorQuotes` is non-empty** |
+| bundle | COUNTER turn ≥2 — ask for value, not price |
+| reciprocity | CONCEDE phase, offer only from `NICE_TO_HAVES` |
+| silence | after any vendor turn containing a number, ~40% of the time emit only `"hmm"` / `"achha"` (≤2 words) and stop |
+| deadline | only if `DEADLINE_IS_REAL` |
+| walk_away | price > `WALK_AWAY` after 2 counters → forced THANK |
 
 **Guards:** `maxTurns = 16` · `maxCallDurationSec = 240` · walk-away breach → exit politely ·
 silence >8s → one re-prompt, then close.
 
 ### Latency budget — a phone call dies above ~1.5s of dead air
 
-| Stage | Budget |
-|---|---|
-| STT endpointing (END_SPEECH → final) | 250–400 ms |
-| sarvam-30b first token (`max_tokens=100`) | 300–500 ms |
-| Bulbul first audio byte (`min_buffer_size=30`) | 200–350 ms |
-| PCM→mulaw + Twilio network | 100–150 ms |
-| **Total perceived turn latency** | **~0.9–1.4 s** ✅ |
+Measured budget for one turn — end of vendor speech → first audio in the vendor's ear.
+**"Naive" is what you get from library defaults. "Tuned" is what you ship.**
 
-**If you're over budget, cut in this order:** (1) drop `max_tokens` to 60, (2) shorten the system
-prompt, (3) insert a filler phrase immediately on END_SPEECH so the line is never silent while the
-LLM thinks, (4) turn off `codemix` mode.
+| Stage | Naive | Tuned | How |
+|---|---:|---:|---|
+| Twilio → ngrok → bridge | 80 ms | 80 ms | colocate the ngrok region |
+| buffer + resample 8k→16k | 0 ms | 20 ms | *adds* time, saves far more |
+| **Saaras VAD end-of-speech** | **1152 ms** | **192 ms** | ⭐ 16 kHz + `negative_frames_count=6` |
+| Saaras final transcript emit | 120 ms | 120 ms | estimate — unverified, least trustworthy row |
+| **LLM time-to-first-token** | **1400 ms** | **350 ms** | ⭐ `reasoning_effort=None` |
+| LLM → first TTS chunk | 300 ms | 150 ms | `min_buffer_size` 50 → 25 |
+| Bulbul first audio byte | 250 ms | 240 ms | documented sub-250 ms |
+| bridge → Twilio → vendor ear | 120 ms | 120 ms | — |
+| **TOTAL** | **3422 ms** ❌ | **1272 ms** ✅ | |
+
+**With a filler injected on a 350 ms timer, perceived dead air drops to ~652 ms.** That is
+comfortably conversational.
+
+Instrument four timestamps per turn (END_SPEECH, transcript, LLM first token, TTS first byte) and log
+them to Convex. **Measure before you write any negotiation logic.** If you cannot get a measured p50
+under 1.5 s by the G3 gate, cut: drop mid-call language switching, pin `hi-IN`, drop the CONCEDE
+state.
+
+**If you're still over budget, cut in this order:** (1) `max_tokens` → 60, (2) shorten the system
+prompt, (3) pre-render six filler WAVs at boot and play one immediately on END_SPEECH so the line is
+never silent, (4) drop `codemix`.
 
 **Use sarvam-30b for in-call turns and sarvam-105b only for offline extraction and summary.** Never
 put 105B in the live loop.
 
-### Structured extraction — where most implementations break
+### Structured extraction — two stages, non-negotiable
 
-`sarvam-105b`, `response_format={"type":"json_object"}`, `max_tokens=4096`, `reasoning_effort=None`.
+`sarvam-105b`, `response_format={"type":"json_object"}`, `max_tokens=4096`, **`reasoning_effort=null`**.
+
+**Stage 1 — the LLM returns both a normalised integer AND the verbatim string it read it from.**
 
 ```json
 {
   "openingQuoteInr": 27500,
   "finalQuoteInr": 24200,
+  "priceVerbatim": "chaubees hazaar do sau",
   "quoteTurnSeq": 11,
+  "deliveryChargeInr": 0,
+  "taxIncluded": false,
+  "deliveryDays": 2,
   "terms": "free delivery, 1 year warranty",
   "contactName": "Rakesh",
   "holdUntil": "Tuesday 6 PM",
@@ -1190,6 +1445,26 @@ put 105B in the live loop.
   "confidence": 0.9
 }
 ```
+
+**Stage 2 — a deterministic Python normaliser re-parses `priceVerbatim`.**
+If the two disagree by more than 2%, drop `confidence` to `"low"` and flag the row in the dashboard.
+
+⚠️ **Keep the ordering: the LLM is primary, the normaliser is only a cross-check.** Do not invert it.
+The Hindi numeral table is irregular and regional romanisations vary wildly
+(`pachees` / `pachis` / `paccis`), and `saath` (60) collides with `saath` (with) — the table is
+best-effort by construction.
+
+### `effectivePriceInr` — rank on this, never on the raw quote
+
+```
+effectivePriceInr = quotedPriceInr
+                  + (deliveryChargeInr or 0)
+                  + (taxIncluded ? 0 : quotedPriceInr * 0.18)
+```
+
+A ₹23,500 quote plus GST and ₹500 delivery loses to a ₹25,000 all-in quote. **If you rank on the raw
+number, your winner will sometimes be wrong on stage** — and a judge who does the arithmetic will
+catch it.
 
 **The extraction prompt must handle Indian number expressions explicitly.** This is the #1 silent
 failure. Give the model these mappings in the prompt:
@@ -1472,10 +1747,16 @@ in a muted tab at the right frame · DND on · `caffeinate -disu` · Slack quit.
 > "Every Indian negotiates ten times a week and loses every time, because the other side does this
 > for a living and you do it once. Watch."
 
-**0:20–0:45 — Voice in.** Send a Telegram **voice note in Hindi**: *"Karol Bagh mein 250 litre ka
-fridge chahiye, 25 hazaar se kam."* Saaras transcribes live on screen, the intent card fills, three
-real shops with real phone numbers appear. **Read one number out loud** — *"that's a real shop, call
-it after the demo."*
+**0:20–0:45 — Voice in.** Send a Telegram **voice note in Hindi** — **under 25 seconds** (§12):
+
+> *"Goa mein 14 tarikh se do raat ke liye hotel chahiye, AC, chaar hazaar se kam per night."*
+
+Saaras transcribes live on screen, the intent card fills, three real hotels with real phone numbers
+appear. **Read one number out loud** — *"that's a real hotel, call it after the demo."*
+
+> ⚠️ **Lead with hotels, not the fridge.** Measured today: Goa hotels return 82 usable phone numbers
+> from OSM; Karol Bagh appliance dealers return 3. Same product, same code path, 27× the data. Keep
+> the fridge as example #2 only if Places billing came through. See §11.
 
 **0:45–1:05 — Dial.** One tap. Three cards go to "dialing". One connects. **The room hears a
 stranger say "Hello?"** That sound is what separates you from every browser demo in the building.
@@ -1487,8 +1768,8 @@ makes it unfakeable.
 > **⭐ The moment lands ≈1:35.** The shopkeeper counter-offers. The agent doesn't accept — it says,
 > in Hindi:
 >
-> *"देखिए, अभी मैंने Nehru Place में बात की, वहाँ same model तेईस हज़ार पाँच सौ में मिल रहा है।
-> आप बाईस आठ सौ कर दीजिए तो मैं अभी confirm कर देता हूँ।"*
+> *"देखिए, अभी मैंने Calangute में बात की, वहाँ AC room तीन हज़ार दो सौ में मिल रहा है।
+> आप तीन हज़ार कर दीजिए तो मैं अभी confirm कर देता हूँ।"*
 >
 > — quoting a **real price it obtained on a different phone call ninety seconds earlier**, with the
 > dashboard highlighting the source call.
