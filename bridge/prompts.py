@@ -24,18 +24,24 @@ MissionType = Literal["availability", "quote", "negotiate"]
 # Order matters: buyer intent FIRST (keeps them on the line), disclosure
 # SECOND, consent question THIRD.
 
-# KEEP THIS SHORT. Measured on a real call: the original three-sentence version
-# ran ~15 seconds and the callee hung up at 10s, before it even finished. Every
-# second here is a second a stranger is waiting to find out why you rang.
-# Still carries all three obligations: AI disclosure, recording notice, consent.
+# How a real person opens a call to a shop: says who they are, what they want,
+# and asks. They do not request permission to ask ("दो बातें पूछ लूँ?" tested
+# badly — stilted, and it wastes a whole turn getting a "haan" before anything
+# useful happens).
+#
+# So: purpose first, disclosure as a natural aside, then straight into the
+# first question. All three obligations (AI, recording, consent-to-continue)
+# still land inside the first ~10 seconds, but it sounds like a person.
 DISCLOSURE = {
     "hi-IN": (
-        "नमस्ते! मैं {name} जी का AI असिस्टेंट हूँ, कॉल रिकॉर्ड हो रही है। "
-        "उन्हें {ask} चाहिए — दो बातें पूछ लूँ?"
+        "नमस्ते! मैं {name} जी के लिए {ask} देख रहा हूँ। "
+        "एक बात बता दूँ — मैं इनका AI असिस्टेंट हूँ और कॉल रिकॉर्ड हो रही है। "
+        "{first_q}"
     ),
     "en-IN": (
-        "Hello! I'm {name}'s AI assistant, and this call is recorded. "
-        "They need {ask} — may I ask you two quick questions?"
+        "Hello! I'm looking for {ask} for {name}. "
+        "Just so you know, I'm their AI assistant and this call is recorded. "
+        "{first_q}"
     ),
 }
 
@@ -91,10 +97,26 @@ def _lang_key(language: str) -> str:
     return language if language in DISCLOSURE else "en-IN"
 
 
-def opening_line(language: str, user_first_name: str, ask: str) -> str:
-    """The first thing said on the call. Disclosure is inside it, by design."""
+def opening_line(
+    language: str,
+    user_first_name: str,
+    ask: str,
+    first_question: str | None = None,
+) -> str:
+    """
+    The first thing said on the call.
+
+    Carries the AI disclosure and the recording notice, and rolls straight into
+    the first real question so the callee immediately knows why their phone
+    rang. Asking "may I ask two things?" first sounds like a script and burns a
+    turn.
+    """
     tpl = DISCLOSURE[_lang_key(language)]
-    return tpl.format(name=user_first_name, ask=ask)
+    q = first_question or {
+        "hi-IN": "क्या यह अभी available है?",
+        "en-IN": "Is it available right now?",
+    }[_lang_key(language)]
+    return tpl.format(name=user_first_name, ask=ask, first_q=q)
 
 
 def build_system_prompt(
@@ -110,6 +132,7 @@ def build_system_prompt(
     walk_away_inr: int | None,
     prior_quotes: list[dict[str, Any]],
     learned_prefs: list[str] | None = None,
+    mission_memory: dict[str, Any] | None = None,
 ) -> str:
     """
     Six blocks, under ~500 tokens. Blocks 3-5 are omitted entirely for
@@ -200,6 +223,34 @@ Then read the WHOLE outcome back as ONE clear sentence and ask them to confirm, 
 Wait for their yes. Then thank them warmly and end the call.
 This read-back is the most important turn of the entire call."""
     )
+
+    # ── What earlier calls in THIS mission taught us. BUILD-SPEC §1.5.1 ─────
+    # This is what makes call 3 negotiate better than call 1, rather than just
+    # quote a number call 1 produced.
+    if mission_memory:
+        mm: list[str] = []
+        if mission_memory.get("goingRateInr"):
+            mm.append(
+                f"The going rate in this market is about ₹{mission_memory['goingRateInr']}. "
+                f"Treat anything far above it as an opening bid, not a real price."
+            )
+        for w in (mission_memory.get("worked") or [])[:3]:
+            mm.append(f"WORKED on an earlier call: {w}")
+        for a in (mission_memory.get("avoid") or [])[:3]:
+            mm.append(f"AVOID — it went badly earlier: {a}")
+        objs = mission_memory.get("objections") or []
+        if objs:
+            mm.append(
+                f"Expect these objections, you have heard them already: "
+                f"{'; '.join(objs[:3])}. Have an answer ready."
+            )
+        if mission_memory.get("suspicion"):
+            mm.append(
+                "Someone earlier challenged whether you were a real person. Keep turns "
+                "short and plain — over-fluent, over-long answers are what gives it away."
+            )
+        if mm:
+            blocks.append("LEARNED THIS MISSION — use it:\n" + "\n".join(f"  - {x}" for x in mm))
 
     if learned_prefs:
         blocks.append(

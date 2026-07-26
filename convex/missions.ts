@@ -108,6 +108,41 @@ export const priorQuotes = internalQuery({
   },
 });
 
+/**
+ * Fold what we just learned into the mission's running memory.
+ *
+ * Bounded hard: this text goes into a latency-critical system prompt on the
+ * NEXT call, so it can never be allowed to grow. Newest lines win.
+ */
+export const mergeMemory = internalMutation({
+  args: {
+    missionId: v.id("missions"),
+    goingRateInr: v.optional(v.number()),
+    worked: v.optional(v.array(v.string())),
+    avoid: v.optional(v.array(v.string())),
+    objections: v.optional(v.array(v.string())),
+    suspicion: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const m = await ctx.db.get(args.missionId);
+    if (!m) return;
+    const cur = m.memory ?? {
+      worked: [], avoid: [], objections: [], suspicion: false,
+    };
+    const cap = (a: string[], b: string[]) =>
+      [...new Set([...a, ...b.map((x) => String(x).slice(0, 110))])].slice(-4);
+    await ctx.db.patch(args.missionId, {
+      memory: {
+        goingRateInr: args.goingRateInr ?? cur.goingRateInr,
+        worked: cap(cur.worked, args.worked ?? []),
+        avoid: cap(cur.avoid, args.avoid ?? []),
+        objections: cap(cur.objections, args.objections ?? []),
+        suspicion: cur.suspicion || (args.suspicion ?? false),
+      },
+    });
+  },
+});
+
 /** Recompute the winner and the headline savings number. */
 export const finalise = internalMutation({
   args: { missionId: v.id("missions"), summaryText: v.optional(v.string()) },

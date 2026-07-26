@@ -41,7 +41,13 @@ Return ONLY JSON:
   "terms": "<what's included, short, or null>",
   "contactName": "<person's name, or null>",
   "holdUntil": "<how long the price holds, verbatim, or null>",
-  "closed": <true if a concrete outcome was reached>
+  "closed": <true if a concrete outcome was reached>,
+  "memory": {
+    "worked": ["<what got them to engage or concede — max 2, short>"],
+    "avoid": ["<what made them resist, go quiet, or hang up — max 2, short>"],
+    "objections": ["<objections they raised, e.g. season rate — max 2>"],
+    "suspicion": <true if they questioned whether you were human>
+  }
 }
 
 RULES:
@@ -53,7 +59,11 @@ RULES:
   "saade X"=X+0.5, "sawa X"=X*1.25, "paune X"=X*0.75, "dedh"=1.5.
 - Integers in rupees. NEVER invent a price that was not spoken — null is correct.
 - The agent reads the whole deal back near the end of the call. THAT LINE IS THE
-  MOST RELIABLE SOURCE — prefer it over anything earlier in the transcript."""
+  MOST RELIABLE SOURCE — prefer it over anything earlier in the transcript.
+- "memory" is coaching for the NEXT call in the same mission. Be specific and
+  behavioural ("volunteered a discount when two nights was mentioned"), never
+  generic ("be polite"). Keep every line under 12 words. Omit what you did not
+  actually observe."""
 
 
 async def extract_outcome(
@@ -134,6 +144,7 @@ async def extract_outcome(
         "contactName": data.get("contactName"),
         "holdUntil": data.get("holdUntil"),
         "closed": data.get("closed"),
+        "memory": data.get("memory") or {},
     }
     logger.info(
         f"[{call_id}] extracted: final={payload['finalQuoteInr']} "

@@ -288,6 +288,78 @@ slot can't be inferred, the Telegram confirmation card asks for it before dialli
 > sentence and gets a yes. One high-signal line in the transcript, for every mission type, every
 > time.
 
+### 1.5.1 Mission memory — the agent must get better with every call
+
+**This is the difference between three phone calls and one negotiation.**
+
+Today each call starts cold: the same prompt, the same opening, the same tactics,
+regardless of what just happened on the previous call in the same mission. That
+wastes the most valuable asset we have — we *just* spoke to someone in this exact
+market, sixty seconds ago.
+
+A mission carries a **running memory** that every subsequent call inherits:
+
+| Carried forward | Why it changes the next call |
+|---|---|
+| **Real quotes obtained** | Already built (`priorQuotes`) — call N cites call N−1's actual price |
+| **The going rate** | After two calls we know the market band; a third quote far above it is an opening bid, not a real price |
+| **Which openers worked** | If two receptionists engaged after a short opener and one hung up on a long one, shorten it |
+| **Where we got made** | If a callee asked "are you a bot?", note what preceded it — usually an over-long or too-fluent turn — and adjust |
+| **Where the edge was** | "They volunteered a discount when I mentioned two nights" → lead with duration next time |
+| **Where they got frustrated** | Repeated question, talked over, long pause → the exact behaviour to suppress on the next call |
+| **Objection patterns** | "Season rate hai" from two hotels means the third will say it too — pre-empt it |
+| **Vocabulary that landed** | Which phrasing of an objective actually got a straight answer |
+
+**Shape.** After each call, the post-call extraction (105B, already running) also
+emits a compact `missionMemory` delta — at most ~6 short lines, because it goes
+into a latency-critical system prompt:
+
+```jsonc
+{
+  "goingRateInr": 4800,            // median of real quotes so far
+  "worked":   ["mentioning 2 nights unlocked a discount"],
+  "avoid":    ["long opener — Shikara hung up during it"],
+  "objections": ["season rate", "no AC in that tier"],
+  "suspicion": false               // did anyone challenge that we're an AI?
+}
+```
+
+It is appended to the next call's system prompt as a **LEARNED THIS MISSION**
+block, above the tactics. Stored on `missions.memory`, so it is inspectable in a
+judge's database spot-check and visible in the dashboard.
+
+**Hard rule, unchanged:** memory may summarise *our own* behaviour and *real*
+quotes we actually obtained. It must never manufacture a quote, and a remembered
+price is still attributed to the shop that said it.
+
+**Why this scores.** It is literally the "Memory & Context" rubric line, and it
+is the honest version of the reverse-auction claim: not just *"call 3 cites call
+1's price"* but *"call 3 negotiates better than call 1 did."*
+
+### 1.5.2 Vendor fit — don't call a five-star for a ₹4,000 room
+
+Live failure, 26 Jul: a ₹4,000/night Goa mission dialled **The Leela Palace**.
+A luxury resort is never going to quote ₹4,000, so the call is a waste of the
+agent's time, our Sarvam credits, and — more importantly — a real receptionist's
+afternoon. Discovery ranks on rating and review count, which actively *promotes*
+exactly the vendors we cannot afford.
+
+Screen every candidate against the budget before dialling:
+
+1. **`priceLevel` from Google Places** when present (Enterprise field mask, already
+   requested) — `PRICE_LEVEL_EXPENSIVE`/`VERY_EXPENSIVE` against a low target is an
+   immediate reject.
+2. **A luxury-brand list** for the obvious, zero-cost cases: Leela, Taj, Oberoi,
+   ITC, Marriott, Hyatt, Hilton, Radisson, Novotel, Grand Hyatt, St Regis, Ritz.
+3. **One cheap `sarvam-30b` screen** on name + address + budget for everything
+   else, returning `{plausible, reason}`.
+
+Rejected vendors keep a `vendors` row with `gateReason: "likely out of budget"`,
+so the dashboard shows the agent declining to waste a call — which reads as
+judgement, not as a gap.
+
+Applies in both directions: don't send a ₹50,000 banquet enquiry to a dhaba either.
+
 ### The demo consequence — one call, three acts
 
 The hotel mission chains all three naturally, which is exactly how a human would make the call:

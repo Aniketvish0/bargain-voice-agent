@@ -117,6 +117,24 @@ http.route({
       holdUntil: b.holdUntil ?? undefined,
       closed: typeof b.closed === "boolean" ? b.closed : undefined,
     });
+
+    // Coaching for the next call in this mission. BUILD-SPEC §1.5.1
+    const mem = b.memory;
+    if (mem && typeof mem === "object") {
+      const call = await ctx.runQuery(internal.calls.getInternal, {
+        callId: b.callId as Id<"calls">,
+      });
+      if (call) {
+        await ctx.runMutation(internal.missions.mergeMemory, {
+          missionId: call.missionId,
+          goingRateInr: numOrUndef(b.finalQuoteInr),
+          worked: Array.isArray(mem.worked) ? mem.worked.map(String) : [],
+          avoid: Array.isArray(mem.avoid) ? mem.avoid.map(String) : [],
+          objections: Array.isArray(mem.objections) ? mem.objections.map(String) : [],
+          suspicion: mem.suspicion === true,
+        });
+      }
+    }
     return ok();
   }),
 });

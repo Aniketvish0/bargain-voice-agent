@@ -330,7 +330,7 @@ function Welcome({
   return (
     <div className="empty">
       <h2 className="hero-h">
-        Give it a goal.<span className="sig">.</span>
+        Give it a goal<span className="sig">.</span>
       </h2>
       <p>
         orydl finds real businesses with real phone numbers, shows you the list, and

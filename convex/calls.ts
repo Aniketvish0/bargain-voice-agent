@@ -282,6 +282,8 @@ export const dial = internalAction({
           },
           // Only real, banked quotes. Empty means the agent must say it has none.
           priorQuotes,
+          // What earlier calls in this mission taught us. BUILD-SPEC §1.5.1
+          missionMemory: mission.memory ?? null,
         }),
       });
 

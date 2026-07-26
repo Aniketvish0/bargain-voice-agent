@@ -150,8 +150,6 @@ export default function App() {
 
   return (
     <>
-      <div className="grain" />
-
       <div className={cls}>
         {/* ------------------------------ left rail ------------------------------ */}
         <aside className="rail">

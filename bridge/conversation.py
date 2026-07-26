@@ -111,6 +111,15 @@ class ConversationDriver:
         self._messages.append({"role": "assistant", "content": text})
         self._last_activity = time.monotonic()
 
+    def mark_asked_in_greeting(self) -> None:
+        """
+        The opening line already asks objective #1, so count it as asked.
+        Without this the agent's very next move repeats the question the callee
+        just heard.
+        """
+        if self._objectives:
+            self._asks[self._objectives[0]["key"]] = 1
+
     async def on_user_text(self, text: str, task, lang_code: str | None = None) -> None:
         if self._closing:
             return

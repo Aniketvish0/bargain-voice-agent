@@ -77,9 +77,32 @@ export const runMission = internalAction({
 
     const from = process.env.TWILIO_FROM_NUMBER ?? "";
 
+    // Budget fit BEFORE the compliance gate. A luxury resort will never quote a
+    // budget rate, so calling it wastes our credits and a real receptionist's
+    // afternoon. Discovery ranks on rating x reviews, which actively promotes
+    // exactly the vendors we cannot afford. BUILD-SPEC §1.5.2
+    const fit: Array<{ plausible: boolean; reason?: string }> = await ctx.runAction(
+      internal.fit.screen,
+      {
+        candidates: candidates.map((c) => ({ name: c.name, address: c.address })),
+        category,
+        locality,
+        targetPriceInr: mission.brief.targetPriceInr,
+      },
+    );
+
     // Gate every candidate. Rejects still get a row so the gate is visible.
     const gated = [];
-    for (const c of candidates) {
+    for (let i = 0; i < candidates.length; i++) {
+      const c = candidates[i];
+      if (fit[i] && !fit[i].plausible) {
+        gated.push({
+          ...c,
+          gatePassed: false,
+          gateReason: fit[i].reason ?? "Likely out of budget",
+        });
+        continue;
+      }
       const g = await ctx.runQuery(internal.gate.check, {
         phone: c.phoneE164,
         fromNumber: from || undefined,

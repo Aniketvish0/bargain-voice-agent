@@ -299,6 +299,7 @@ def build_pipeline(
         walk_away_inr=brief.get("brief", {}).get("walkAwayInr"),
         prior_quotes=brief.get("priorQuotes", []),
         learned_prefs=brief.get("learnedPrefs", []),
+        mission_memory=brief.get("missionMemory"),
     )
 
     # ── We drive the conversation loop ourselves. ───────────────────────
@@ -368,7 +369,12 @@ def build_pipeline(
             if brief.get("brief", {}).get("locality")
             else ""
         )
-        greeting = opening_line(language, state.user_first_name, ask)
+        objs = brief.get("brief", {}).get("objectives", [])
+        first_q = objs[0]["ask"] if objs else None
+        greeting = opening_line(language, state.user_first_name, ask, first_q)
+        # The opener already asked objective #1 — tell the state machine, or it
+        # will ask the same thing again as its first move.
+        conversation.mark_asked_in_greeting()
         convex.consent(
             call_id=state.call_id,
             phone=state.phone,

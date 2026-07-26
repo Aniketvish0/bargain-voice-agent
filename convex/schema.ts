@@ -111,6 +111,18 @@ export default defineSchema({
       v.literal("failed"),
       v.literal("cancelled"),
     ),
+    /**
+     * What we learned from earlier calls in THIS mission, carried into the
+     * next one. BUILD-SPEC §1.5.1 — the difference between three phone calls
+     * and one negotiation.
+     */
+    memory: v.optional(v.object({
+      goingRateInr: v.optional(v.number()),
+      worked: v.array(v.string()),
+      avoid: v.array(v.string()),
+      objections: v.array(v.string()),
+      suspicion: v.boolean(),
+    })),
     bestCallId: v.optional(v.id("calls")),
     savedInr: v.optional(v.number()),
     summaryText: v.optional(v.string()),
