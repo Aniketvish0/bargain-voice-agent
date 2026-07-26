@@ -96,6 +96,7 @@ class ConversationDriver:
         # fired, so the agent bid 4800 and then immediately 5280 against
         # itself with the callee never having spoken.
         self._awaiting_counter_reply = False
+        self._confirmed = False
 
         self._pending: list[str] = []
         self._timer: asyncio.Task | None = None
@@ -214,15 +215,32 @@ class ConversationDriver:
                 )
 
         # 3. Read the deal back and close.
-        known = ", ".join(f"{k}={v}" for k, v in self._slots.items()) or "what they told you"
-        if self._counters:
-            known += (
-                f" (you have already countered {self._counters} time(s) — read back the "
-                f"price they LAST agreed to, not their opening quote)"
+        # Only ever read back what we ACTUALLY have. When the price slot was
+        # empty the model filled the gap with a literal "₹[price]" and said it
+        # out loud. Never hand it a hole to improvise into.
+        filled = {k: v for k, v in self._slots.items() if v is not None}
+        pretty = {
+            o["key"]: o["ask"].rstrip("?") for o in self._objectives
+        }
+        known = "; ".join(f"{pretty.get(k, k)}: {v}" for k, v in filled.items())
+
+        missing_required = [
+            o for o in self._objectives
+            if o.get("required") and o["key"] not in filled
+        ]
+        if missing_required:
+            return "confirm", (
+                f"You could NOT get: {', '.join(o['ask'] for o in missing_required)}. "
+                f"Do not invent it, do not use a placeholder, do not say a number you "
+                f"were not given. Briefly confirm only what you DID learn"
+                + (f" ({known})" if known else "")
+                + ", say the customer will follow up on the rest, and thank them."
             )
+
         return "confirm", (
-            f"Read the outcome back in ONE sentence and ask them to confirm: {known}. "
-            f"If you do not have their name yet, ask for it in the same sentence."
+            f"Read this back in ONE sentence using these exact values, then ask them to "
+            f"confirm: {known}. If you do not have their name, ask for it in the same "
+            f"sentence. Never speak a placeholder or a field name."
         )
 
     # ── loop ────────────────────────────────────────────────────────────────
@@ -237,8 +255,25 @@ class ConversationDriver:
         if utterance:
             self._reply = asyncio.create_task(self._respond(utterance, task))
 
+    _YES = (
+        "yes", "yeah", "yep", "haan", "han", "ha", "ji", "sahi", "correct", "right",
+        "ok", "okay", "theek", "thik", "बिलकुल", "हाँ", "ठीक", "सही", "હા", "ஆம்",
+    )
+
+    def _is_affirmative(self, text: str) -> bool:
+        t = text.lower().strip(" .!?।")
+        return len(t.split()) <= 4 and any(w in t for w in self._YES)
+
     async def _respond(self, utterance: str, task) -> None:
         if self._closing:
+            return
+
+        # They confirmed the read-back. We have what we came for — say thanks
+        # and hang up. Without this the agent kept re-confirming while the
+        # callee answered "Yes" four times over 112 seconds.
+        if self._confirmed and self._is_affirmative(utterance):
+            logger.info(f"[{self._state.call_id}] deal confirmed — closing")
+            await self._close(task)
             return
         self._turns += 1
         if self._turns > MAX_TURNS:
@@ -259,6 +294,8 @@ class ConversationDriver:
 
         # Fold in anything they told us, whether or not we asked for it.
         rejected_price = False
+        price_just_landed = False
+        had_price = self._best_price is not None
         for k, v in (heard or {}).items():
             if v is None or k not in self._asks:
                 continue
@@ -308,6 +345,8 @@ class ConversationDriver:
                 self._best_price = (
                     int(v) if self._best_price is None else min(self._best_price, int(v))
                 )
+                if not had_price:
+                    price_just_landed = True
         if heard:
             logger.info(f"[{self._state.call_id}] goal={goal_kind} slots={self._slots}")
 
@@ -329,10 +368,22 @@ class ConversationDriver:
         )
         if last_agent and _similar(reply, last_agent) > 0.7:
             self._stall += 1
-            logger.info(f"[{self._state.call_id}] near-repeat #{self._stall}")
-            if self._stall >= 2:
+            logger.info(f"[{self._state.call_id}] near-repeat #{self._stall} - advancing")
+            # Do NOT hang up on someone because OUR phrasing repeated - that is
+            # us cutting the call on them. Burn the current objective so
+            # _next_goal moves on, and say a short acknowledgement instead of
+            # the duplicate sentence.
+            for o in self._objectives:
+                if o["key"] not in self._slots:
+                    self._asks[o["key"]] = MAX_ASKS_PER_OBJECTIVE
+                    break
+            if self._stall >= 3:
                 await self._close(task)
                 return
+            reply = {
+                "hi-IN": "ठीक है जी, समझ गया।",
+                "en-IN": "Alright, understood.",
+            }.get(self._reply_lang, "Alright, understood.")
         else:
             self._stall = 0
 
@@ -344,6 +395,25 @@ class ConversationDriver:
         self._state.turn_seq += 1
         await self._say(task, reply)
         self._last_activity = time.monotonic()
+
+        # A number just landed. Phone-band audio mangles digits badly - "6000"
+        # came back as 86000, as 0, and as nothing across separate calls. Read
+        # it straight back before building anything on it, exactly as a person
+        # does on a bad line.
+        if price_just_landed and not rejected_price:
+            confirm_num = {
+                "hi-IN": f"{self._best_price} रुपये per night — सही सुना मैंने?",
+                "en-IN": f"{self._best_price} rupees per night — did I hear that right?",
+            }.get(self._reply_lang, f"{self._best_price} rupees per night, correct?")
+            self._messages.append({"role": "assistant", "content": confirm_num})
+            self._convex.turn(self._state.call_id, "agent", confirm_num)
+            self._state.transcript.append(
+                {"seq": self._state.turn_seq, "role": "agent", "text": confirm_num}
+            )
+            self._state.turn_seq += 1
+            await self._say(task, confirm_num)
+            self._last_activity = time.monotonic()
+            return
 
         # Re-evaluate now that the slots are current. The goal above was
         # computed BEFORE we knew what they just said, so the turn a price
@@ -367,9 +437,11 @@ class ConversationDriver:
                 self._last_activity = time.monotonic()
                 return
 
+        # We used to close 6s after the readback, which hung up on people
+        # mid-sentence. Let the silence watchdog end the call instead - it
+        # already waits for a genuine pause.
         if goal_kind == "confirm":
-            await asyncio.sleep(6.0)
-            await self._close(task)
+            self._confirmed = True
 
     async def _complete(self, instruction: str) -> tuple[dict, str]:
         """One round trip: interpret what they said AND phrase the next line."""
@@ -381,7 +453,10 @@ class ConversationDriver:
                 f"ALREADY KNOWN — never ask about these again: "
                 f"{json.dumps(self._slots, ensure_ascii=False) if self._slots else 'nothing yet'}\n"
                 f"LANGUAGE: reply in {self._reply_lang}, matching the caller.\n"
-                f"LENGTH: ONE spoken sentence, under 25 words. No markdown, no lists.\n\n"
+                f"LENGTH: ONE spoken sentence, under 25 words. No markdown, no lists.\n"
+                f"NEVER speak a placeholder like [price] or [name] — if you do not have "
+                f"a value, ask for it instead. NEVER say an internal field name such as "
+                f"hasRoom or pricePerNight; use ordinary words a shopkeeper would use.\n\n"
                 f'Return ONLY JSON: {{"heard": {{}}, "reply": "..."}}\n'
                 f'"heard" = values the caller JUST gave, keyed by: {keys}. Integers in '
                 f"rupees for money, true/false for yes/no. Omit anything they did not "
