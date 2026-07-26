@@ -8,10 +8,14 @@
  * @module
  */
 
+import type * as gate from "../gate.js";
+import type * as intent from "../intent.js";
 import type * as lib_compliance from "../lib/compliance.js";
 import type * as lib_constants from "../lib/constants.js";
+import type * as lib_inr from "../lib/inr.js";
 import type * as lib_phone from "../lib/phone.js";
 import type * as lib_sarvam from "../lib/sarvam.js";
+import type * as users from "../users.js";
 
 import type {
   ApiFromModules,
@@ -20,10 +24,14 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  gate: typeof gate;
+  intent: typeof intent;
   "lib/compliance": typeof lib_compliance;
   "lib/constants": typeof lib_constants;
+  "lib/inr": typeof lib_inr;
   "lib/phone": typeof lib_phone;
   "lib/sarvam": typeof lib_sarvam;
+  users: typeof users;
 }>;
 
 /**

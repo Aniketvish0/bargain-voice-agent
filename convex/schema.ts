@@ -180,6 +180,7 @@ export default defineSchema({
     .index("by_mission", ["missionId"])
     .index("by_sid", ["twilioCallSid"])
     .index("by_status", ["status"])
+    .index("by_phone", ["phoneE164"])
     .index("by_from_time", ["fromNumber", "startedAt"]),
 
   /** Append-only. FINALS ONLY. Never one row per ASR chunk. */
