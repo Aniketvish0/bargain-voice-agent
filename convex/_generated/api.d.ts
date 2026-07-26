@@ -8,13 +8,23 @@
  * @module
  */
 
+import type * as lib_compliance from "../lib/compliance.js";
+import type * as lib_constants from "../lib/constants.js";
+import type * as lib_phone from "../lib/phone.js";
+import type * as lib_sarvam from "../lib/sarvam.js";
+
 import type {
   ApiFromModules,
   FilterApi,
   FunctionReference,
 } from "convex/server";
 
-declare const fullApi: ApiFromModules<{}>;
+declare const fullApi: ApiFromModules<{
+  "lib/compliance": typeof lib_compliance;
+  "lib/constants": typeof lib_constants;
+  "lib/phone": typeof lib_phone;
+  "lib/sarvam": typeof lib_sarvam;
+}>;
 
 /**
  * A utility for referencing Convex functions in your app's public API.

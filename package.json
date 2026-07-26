@@ -21,6 +21,11 @@
   },
   "homepage": "https://github.com/Aniketvish0/bargain-voice-agent#readme",
   "dependencies": {
-    "convex": "^1.42.3"
+    "convex": "^1.42.3",
+    "libphonenumber-js": "^1.13.9"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2"
   }
 }
