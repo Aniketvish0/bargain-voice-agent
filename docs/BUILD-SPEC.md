@@ -1,15 +1,99 @@
-# MOL-BHAV — Product Requirements Document
+# DOOT — Build Specification
 
 **An AI that picks up the phone and haggles for you, in your language.**
 
 Sarvam Epoch Buildathon · GrowthX · Sunday 26 July 2026
 Build sprint 10:30–16:30 IST · **Freeze 16:00 · Submit 16:10** (not 16:29)
 
+> **Relationship to the other docs.** [`PRD.md`](PRD.md) owns the *product* — problem, user, JTBD,
+> differentiators, success metrics. **This document owns the *technical decisions*** and is the
+> authority where the two disagree, because it is backed by primary-source verification done today.
+> Section 0.1 lists exactly where they disagree and why. Read that first.
+
 ---
 
-## 0. READ THIS FIRST
+## 0.1 CORRECTIONS TO THE PLANNING DOCS — read before writing code
 
-This PRD is written to be executed by several agents/humans working **in parallel**. Section 16
+Five things in `PRD.md` / `ARCHITECTURE.md` will cost you time if followed as written.
+
+### ① Wrong Sarvam model names — fix this first, it misroutes every agent
+
+`PRD.md` §5 names **Saarika**, **Sarvam-M**, and **Saaras** as three separate components. That
+mapping is out of date and will send agents to deprecated endpoints.
+
+| PRD.md says | Actually use | Why |
+|---|---|---|
+| Saarika (streaming ASR) | **`saaras:v3`** | Saaras v3 *is* the current STT model — 23 languages, code-mixed, and it does both transcription and translation via the `mode` kwarg. Saarika is the older line. |
+| Sarvam-M (LLM) | **`sarvam-30b`** live, **`sarvam-105b`** offline | Sarvam-M is the older open-weights model. 30B for in-call turns (latency), 105B for extraction and summary. Never put 105B in the live loop. |
+| Saaras (speech translation) *(stretch)* | same `saaras:v3`, `mode="translate"` | Not a separate product. It's a constructor kwarg. This makes the "cross-language bridge" stretch goal nearly free. |
+
+See §7 for the full endpoint table.
+
+### ② The telephony open question is closed
+
+`PRD.md` §8 lists *"confirm whether Sarvam ships a telephony/voice-agent runtime"* as the biggest
+unknown. **Answer: it does not, and you don't need it.**
+
+Sarvam publishes an official Twilio integration guide using Pipecat
+(`docs.sarvam.ai/api/integration/build-voice-agent-with-twilio`) with working code. That is the path.
+**"Sarvam Conversations" is enterprise-only and there is nothing an on-site rep can unlock** — do not
+spend the morning asking.
+
+⚠️ **Do not evaluate Exotel or Plivo-India as the same doc suggests.** Both require business-entity
+KYC (Certificate of Incorporation + GST), 1–7 business days. They are impossible today. See §10.
+
+### ③ Twilio trial blocks `<Stream>` — this is binary, not a degradation
+
+`<Stream>` and `<Record>` are **blocked TwiML verbs on a Twilio trial account.** There is no
+half-working mode. **You must upgrade (~$20) before anything works.** Enable international
+transactions in your bank app first — RBI disables it by default on new Indian cards and the decline
+is silent. See §3.
+
+### ④ Parallel calling: correct as an ambition, wrong as the MVP
+
+`PRD.md` §3 makes *"fan-out, not one call"* and *real-time* cross-call leverage the star mechanic.
+The leverage mechanic is absolutely right and is the best idea in the product. **But parallel is the
+harder way to get it, and it is not what you should build first.**
+
+| | Sequential (build this) | Parallel (stretch) |
+|---|---|---|
+| How leverage works | Call N cites call N−1's **finished, extracted** quote | Call B must cite call A's quote **mid-call**, before A has ended |
+| Requires | Post-call extraction you're building anyway | Live mid-call quote extraction + shared state across concurrent pipelines |
+| Sarvam constraint | None | Burst-opened sockets rejected with **close code 1003**; 3 calls = 6 sockets. Needs ≥300ms stagger (use 500ms), cap 3. Chat ceiling is **40 req/min**. |
+| Demo risk | Deterministic | Non-deterministic — the citation may simply not fire |
+| Wall clock | ~3× longer | ~1× |
+
+**The judge cannot tell the difference.** What lands on stage is *"it just quoted a price it got from
+a different shop ninety seconds ago"* — and sequential guarantees that line fires. Parallel only
+saves wall-clock, and you are demoing one mission, not fifty.
+
+**Build sequential. If it's green early, promote parallel.** §13 Block 5 has the prompt.
+
+### ⑤ Checkpoint B (mid-call human escalation) — keep it, but schedule it honestly
+
+This is not in my spec and it is a genuinely excellent idea — pausing a live call, pinging the user
+on Telegram, and resuming with *"ek minute please"* is a better demo moment than anything in §18.
+
+But cost it correctly: it needs a pause/resume path in the Pipecat pipeline, a Telegram round-trip
+with an unbounded human wait, a filler-audio loop that doesn't trip the 60s Sarvam idle-close
+(`keepalive_interval=5.0` handles the socket; you still need audio on the line), and a timeout branch
+for when the user doesn't answer.
+
+**Do not attempt it before the G3 gate (§17) is green.** If you get there by 14:00, build it —
+it is worth more than the dashboard polish. If not, cut it without regret.
+
+### Also worth knowing
+
+- `PRD.md` §4 targets *"MVP running by 12:15"*. Check the clock against §17 and re-baseline out loud.
+- `convex/schema.ts` is currently empty with `schemaValidation: false`. That's a defensible hackathon
+  choice, but with five parallel lanes a **frozen, validated schema prevents more bugs than it
+  causes**. §9 has one ready to paste. Decide once, now, and don't revisit it at 15:00.
+
+---
+
+## 0.2 HOW TO USE THIS DOCUMENT
+
+This spec is written to be executed by several agents/humans working **in parallel**. Section 16
 defines five lanes with **frozen interface contracts**. If you are an agent picking this up:
 
 1. Find your lane in §16.
@@ -28,7 +112,7 @@ compress: the go/no-go gate at §12 must still be green by 12:30 or you switch t
 
 ## 1. THE PRODUCT
 
-**One line:** You tell Mol-Bhav what you want to buy and what you want to pay. It finds real
+**One line:** You tell Doot what you want to buy and what you want to pay. It finds real
 businesses, calls them on the actual phone network, negotiates in the language the shopkeeper
 speaks, and sends you back the best deal.
 
@@ -43,7 +127,7 @@ call #2 cites the real price obtained on call #1, ninety seconds earlier.
 > User sends a Telegram **voice note in Hindi**:
 > *"Karol Bagh mein 250 litre ka fridge chahiye, 25 hazaar se kam."*
 
-Mol-Bhav transcribes it, extracts `{category: refrigerator, capacity: 250L, locality: Karol Bagh,
+Doot transcribes it, extracts `{category: refrigerator, capacity: 250L, locality: Karol Bagh,
 targetPriceInr: 25000}`, finds three real electronics dealers with real phone numbers, calls them
 sequentially, negotiates each in Hindi, and returns:
 
@@ -62,7 +146,7 @@ dashboard where every transcript is readable.
 
 ### Scope boundary
 
-Mol-Bhav **negotiates and reports**. It does **not** book, reserve, pay, or commit. The agent says:
+Doot **negotiates and reports**. It does **not** book, reserve, pay, or commit. The agent says:
 *"I'll pass this to the customer, they'll confirm directly."* This is both an ethical line and a
 scope cut that saves you two hours.
 
