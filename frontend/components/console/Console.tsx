@@ -241,6 +241,7 @@ export function Console() {
         <MissionRail
           missions={missions}
           activeId={missionId}
+          token={token}
           onSelect={(id) => {
             setMissionId(id);
             setCallId(null);

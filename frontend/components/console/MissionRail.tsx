@@ -28,10 +28,13 @@ export function MissionRail({
   missions,
   activeId,
   onSelect,
+  token,
 }: {
   missions: any[] | undefined;
   activeId: Id<"missions"> | null;
   onSelect: (id: Id<"missions">) => void;
+  /** Needed only to tell "not signed in" apart from "still loading". */
+  token?: string | null;
 }) {
   const [q, setQ] = useState("");
 
@@ -71,7 +74,20 @@ export function MissionRail({
       </div>
 
       <div className="rail-list">
-        {missions === undefined && (
+        {/*
+          `useQuery(..., "skip")` also returns undefined, so a MISSING TOKEN
+          looked exactly like a slow network and the rail said "Loading
+          missions…" forever. Distinguish the two — a stuck spinner tells the
+          user nothing about what to actually do.
+        */}
+        {missions === undefined && !token && (
+          <div className="rail-empty">
+            Not connected. Send <b>/start</b> to <b>@orydl_bot</b> and open the
+            link it DMs you.
+          </div>
+        )}
+
+        {missions === undefined && token && (
           <div className="rail-empty">Loading missions…</div>
         )}
 
