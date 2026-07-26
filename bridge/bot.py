@@ -369,12 +369,16 @@ def build_pipeline(
             if brief.get("brief", {}).get("locality")
             else ""
         )
-        objs = brief.get("brief", {}).get("objectives", [])
-        first_q = objs[0]["ask"] if objs else None
-        greeting = opening_line(language, state.user_first_name, ask, first_q)
-        # The opener already asked objective #1 — tell the state machine, or it
-        # will ask the same thing again as its first move.
-        conversation.mark_asked_in_greeting()
+        # The opener no longer asks objective #1 — it was being pasted in as raw
+        # English inside a Hindi sentence, and the next turn then asked the same
+        # thing again in Hindi. The state machine asks it properly, in one
+        # language, on the first real turn.
+        greeting = opening_line(
+            language,
+            state.user_first_name,
+            ask,
+            recording=os.getenv("RECORD_CALLS", "true").lower() == "true",
+        )
         convex.consent(
             call_id=state.call_id,
             phone=state.phone,

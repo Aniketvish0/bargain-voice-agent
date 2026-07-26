@@ -147,7 +147,8 @@ async def place_call(
             to=phone,
             from_=from_number,
             twiml=twiml,
-            record=True,  # free, and it is your demo fallback footage
+            # Recording is what forces the spoken notice. Turn both off together.
+            record=os.getenv("RECORD_CALLS", "true").lower() == "true",
             timeout=int(os.getenv("RING_TIMEOUT_SEC", "12")),  # then move to the next vendor
             **(
                 {

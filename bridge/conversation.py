@@ -78,6 +78,12 @@ _NUM = re.compile(r"\d[\d,]*")
 
 # Words that actually constitute a denial. Anything else, and a False from the
 # model is a failed extraction rather than something the callee told us.
+# Fillers and false starts that carry no commitment on their own.
+_HEDGE = re.compile(
+    r"^\s*(haan|हाँ|हां|ha|ji|जी)\s*(main|मैं|matlab|मतलब|woh|वो|but|lekin|लेकिन)?\s*[।.,]?\s*$",
+    re.IGNORECASE,
+)
+
 _NEGATIVE = re.compile(
     r"\bno\b|\bnot\b|\bnahi+n?\b|\bnahin\b|\bcan'?t\b|\bcannot\b|\bunavailable\b|"
     r"\bsold out\b|\bbooked\b|\bfull\b|नहीं|नही|खाली नहीं|इल्ल|இல்லை|ಇಲ್ಲ",
@@ -140,6 +146,13 @@ class ConversationDriver:
         self._just_heard: dict = {}
         self._just_asked_recently: set = set()
         self._odd_price_seen: int | None = None
+        # The last price the CALLEE stated, kept apart from our own offers so a
+        # wrongly-banked counter can be reverted to something they really said.
+        self._their_price: int | None = None
+        # (goal, numbers) of our last utterance. Language-independent, unlike
+        # token overlap — the same confirmation in English then Hindi slipped
+        # straight past the text comparison.
+        self._last_sig: tuple | None = None
         self._walked_away = False
         self._deal_agreed = False
 
@@ -545,6 +558,7 @@ class ConversationDriver:
                 self._best_price = (
                     int(v) if self._best_price is None else min(self._best_price, int(v))
                 )
+                self._their_price = int(v)
                 if not had_price:
                     price_just_landed = True
         if heard:
@@ -565,7 +579,16 @@ class ConversationDriver:
             heard_price = any(
                 self._types.get(k) in ("money", "number") for k in (heard or {})
             )
-            if self._last_offer and self._is_affirmative(utterance) and not heard_price:
+            if (
+            self._last_offer
+            and self._is_affirmative(utterance)
+            and not heard_price
+            # A bare fragment is not agreement to a price. "हाँ मैं।" is a
+            # false start, not a deal — it banked our own 4800 as theirs.
+            and len(utterance.split()) >= 2
+            and not _NEGATIVE.search(utterance)
+            and not _HEDGE.search(utterance)
+        ):
                 logger.info(f"[{self._state.call_id}] counter accepted at {self._last_offer}")
                 self._best_price = self._last_offer
                 for o in self._objectives:
@@ -573,6 +596,22 @@ class ConversationDriver:
                         self._slots[o["key"]] = self._last_offer
                 self._counters = 3        # done haggling
                 self._deal_agreed = True  # we WON — never walk away now
+
+        # They pushed back after we banked a price. Undo it and reopen — the
+        # agent confirmed 4800 straight through an explicit "नहीं नहीं, कोई
+        # डिस्काउंट नहीं है" and then hung up mid-objection.
+        if _NEGATIVE.search(utterance) and self._deal_agreed:
+            logger.info(
+                f"[{self._state.call_id}] refusal after agreement — reverting "
+                f"{self._best_price} to their last stated price {self._their_price}"
+            )
+            self._deal_agreed = False
+            self._confirmed = False
+            if self._their_price:
+                self._best_price = self._their_price
+                for o in self._objectives:
+                    if o.get("type") == "money":
+                        self._slots[o["key"]] = self._their_price
 
         goal_kind, instruction = self._next_goal()
 
@@ -609,6 +648,26 @@ class ConversationDriver:
 
         if not reply:
             return
+
+        sig = (
+            goal_kind,
+            tuple(sorted((k, str(v)) for k, v in self._slots.items())),
+            self._last_offer,
+        )
+        if sig == self._last_sig:
+            self._stall += 1
+            logger.info(
+                f"[{self._state.call_id}] same goal+numbers as last turn "
+                f"({goal_kind}) — not saying it twice"
+            )
+            for o in self._objectives:
+                if o["key"] not in self._slots:
+                    self._asks[o["key"]] = MAX_ASKS_PER_OBJECTIVE
+                    break
+            if self._stall >= 2:
+                await self._close(task)
+            return
+        self._last_sig = sig
 
         last_agent = next(
             (m["content"] for m in reversed(self._messages) if m["role"] == "assistant"), ""
@@ -846,6 +905,13 @@ class ConversationDriver:
             while not self._closing:
                 await asyncio.sleep(1.0)
                 if time.monotonic() - self._last_activity < SILENCE_NUDGE_SECS:
+                    continue
+                # Never nudge while a reply is being composed or spoken — that
+                # is how we ended up talking over someone mid-sentence.
+                if (self._reply and not self._reply.done()) or (
+                    self._timer and not self._timer.done()
+                ):
+                    self._last_activity = time.monotonic()
                     continue
                 if not nudged:
                     nudged = True

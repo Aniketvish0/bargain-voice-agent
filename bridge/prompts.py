@@ -33,16 +33,14 @@ MissionType = Literal["availability", "quote", "negotiate"]
 # first question. All three obligations (AI, recording, consent-to-continue)
 # still land inside the first ~10 seconds, but it sounds like a person.
 DISCLOSURE = {
-    "hi-IN": (
-        "नमस्ते! मैं {name} जी के लिए {ask} देख रहा हूँ। "
-        "एक बात बता दूँ — मैं इनका AI असिस्टेंट हूँ और कॉल रिकॉर्ड हो रही है। "
-        "{first_q}"
-    ),
-    "en-IN": (
-        "Hello! I'm looking for {ask} for {name}. "
-        "Just so you know, I'm their AI assistant and this call is recorded. "
-        "{first_q}"
-    ),
+    "hi-IN": "नमस्ते! मैं {name} जी का AI असिस्टेंट बोल रहा हूँ — उन्हें {ask} चाहिए।{rec}",
+    "en-IN": "Hello! I'm {name}'s AI assistant — they're looking for {ask}.{rec}",
+}
+
+# Appended only when the call is actually being recorded.
+REC_NOTICE = {
+    "hi-IN": " कॉल रिकॉर्ड हो रही है।",
+    "en-IN": " This call is recorded.",
 }
 
 # Answer to "are you a bot?" — scripted, never generated.
@@ -106,7 +104,8 @@ def opening_line(
     language: str,
     user_first_name: str,
     ask: str,
-    first_question: str | None = None,
+    first_question: str | None = None,   # deprecated, ignored — see note above
+    recording: bool = True,
 ) -> str:
     """
     The first thing said on the call.
@@ -116,12 +115,9 @@ def opening_line(
     rang. Asking "may I ask two things?" first sounds like a script and burns a
     turn.
     """
-    tpl = DISCLOSURE[_lang_key(language)]
-    q = first_question or {
-        "hi-IN": "क्या यह अभी available है?",
-        "en-IN": "Is it available right now?",
-    }[_lang_key(language)]
-    return tpl.format(name=user_first_name, ask=ask, first_q=q)
+    k = _lang_key(language)
+    rec = REC_NOTICE[k] if recording else ""
+    return DISCLOSURE[k].format(name=user_first_name, ask=ask, rec=rec)
 
 
 def build_system_prompt(
