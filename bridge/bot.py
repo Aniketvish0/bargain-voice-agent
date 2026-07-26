@@ -142,8 +142,10 @@ class TranscriptTap(FrameProcessor):
                 self._convex.turn(st.call_id, "system", "BOW_OUT — hanging up, number blacklisted")
                 task = self._task_ref.get("task")
                 if task:
-                    await task.queue_frames(
-                        [TTSSpeakFrame(BOW_OUT.get(st.language, BOW_OUT["en-IN"]))]
+                    # Through the gate, not around it — this used to be able to
+                    # land on top of a reply already in flight.
+                    await self._conversation.speak_scripted(
+                        task, BOW_OUT.get(st.language, BOW_OUT["en-IN"]), terminal=True
                     )
                     await task.queue_frame(EndFrame())
                 return  # never forward to the LLM
@@ -155,7 +157,7 @@ class TranscriptTap(FrameProcessor):
                 )
                 task = self._task_ref.get("task")
                 if task:
-                    await task.queue_frame(TTSSpeakFrame(answer))
+                    await self._conversation.speak_scripted(task, answer, terminal=True)
                 self._record_agent(answer)
                 return
 
@@ -377,7 +379,8 @@ def build_pipeline(
             language,
             state.user_first_name,
             ask,
-            recording=os.getenv("RECORD_CALLS", "true").lower() == "true",
+            # Whether we SAY it, not whether we do it. See bridge/.env.
+            recording=os.getenv("ANNOUNCE_RECORDING", "false").lower() == "true",
         )
         convex.consent(
             call_id=state.call_id,
@@ -388,6 +391,7 @@ def build_pipeline(
         convex.turn(state.call_id, "agent", greeting)
         state.transcript.append({"seq": state.turn_seq, "role": "agent", "text": greeting})
         state.turn_seq += 1
+        conversation.arm_greeting()            # let turn 0 through the gate
         conversation.seed_greeting(greeting)   # so it does not greet twice
         await task.queue_frame(TTSSpeakFrame(greeting))
 

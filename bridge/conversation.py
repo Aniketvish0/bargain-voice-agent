@@ -153,6 +153,10 @@ class ConversationDriver:
         # token overlap — the same confirmation in English then Hindi slipped
         # straight past the text comparison.
         self._last_sig: tuple | None = None
+        # ── speech gate ──
+        self._speech_lock = asyncio.Lock()
+        self._turn_id = 0        # increments on every inbound utterance
+        self._spoke_turn = -1    # the turn we last spoke for
         self._walked_away = False
         self._deal_agreed = False
 
@@ -168,6 +172,27 @@ class ConversationDriver:
         self._last_activity = time.monotonic()
 
     # ── input ───────────────────────────────────────────────────────────────
+
+    async def speak_scripted(self, task, text: str, *, terminal: bool = False) -> None:
+        """
+        For lines the reflexes own — the bow-out and the "are you a bot?"
+        answer. They used to queue TTS directly from bot.py, bypassing the gate
+        entirely, so either could land on top of a reply already in flight.
+
+        Cancels any pending reply first: a scripted reflex always wins, because
+        both of them are responses to something the callee said that matters
+        more than whatever we were about to say.
+        """
+        if self._timer and not self._timer.done():
+            self._timer.cancel()
+        if self._reply and not self._reply.done():
+            self._reply.cancel()
+        self._pending.clear()
+        await self._say(task, text, force=terminal)
+
+    def arm_greeting(self) -> None:
+        """The opener is turn 0; let it through the gate."""
+        self._spoke_turn = -1
 
     def seed_greeting(self, text: str) -> None:
         """
@@ -200,6 +225,7 @@ class ConversationDriver:
         if self._closing:
             return
         self._last_activity = time.monotonic()
+        self._turn_id += 1        # new turn — the gate re-arms
         self._pending.append(text)
         # NOTE: do NOT clear _awaiting_counter_reply here. Clearing it on ANY
         # incoming text meant a cough, an "hmm" or a backchannel counted as
@@ -882,8 +908,26 @@ class ConversationDriver:
 
     # ── exits ───────────────────────────────────────────────────────────────
 
-    async def _say(self, task, text: str) -> None:
-        await task.queue_frame(TTSSpeakFrame(text))
+    async def _say(self, task, text: str, *, force: bool = False) -> None:
+        """
+        The ONLY way anything is ever spoken.
+
+        Serialised by a lock and stamped with the current turn id. A second
+        utterance for a turn that already spoke is dropped and logged, never
+        queued — no matter which branch produced it or what language it is in.
+
+        `force=True` is for the closing line only: hanging up silently is worse
+        than one extra sentence, and by then the call is ending anyway.
+        """
+        async with self._speech_lock:
+            if not force and self._spoke_turn == self._turn_id:
+                logger.warning(
+                    f"[{self._state.call_id}] DROPPED duplicate utterance for "
+                    f"turn {self._turn_id}: {text[:70]!r}"
+                )
+                return
+            self._spoke_turn = self._turn_id
+            await task.queue_frame(TTSSpeakFrame(text))
 
     async def _close(self, task) -> None:
         if self._closing:
@@ -894,7 +938,7 @@ class ConversationDriver:
             if self._walked_away
             else CLOSE.get(self._reply_lang, CLOSE["en-IN"])
         )
-        await self._say(task, line)
+        await self._say(task, line, force=True)
         await asyncio.sleep(3.0)
         await task.queue_frame(EndFrame())
 
