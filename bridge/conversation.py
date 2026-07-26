@@ -76,6 +76,14 @@ WALKAWAY_CLOSE = {
 
 _NUM = re.compile(r"\d[\d,]*")
 
+# Words that actually constitute a denial. Anything else, and a False from the
+# model is a failed extraction rather than something the callee told us.
+_NEGATIVE = re.compile(
+    r"\bno\b|\bnot\b|\bnahi+n?\b|\bnahin\b|\bcan'?t\b|\bcannot\b|\bunavailable\b|"
+    r"\bsold out\b|\bbooked\b|\bfull\b|नहीं|नही|खाली नहीं|इल्ल|இல்லை|ಇಲ್ಲ",
+    re.IGNORECASE,
+)
+
 
 def _similar(a: str, b: str) -> float:
     """
@@ -313,6 +321,16 @@ class ConversationDriver:
 
         # 2b. Their price is far above what we can do and the ladder is spent.
         #     Say so, honestly and warmly, instead of hanging up on them.
+        # If their price is at or below what we last asked for, we WON — taking
+        # that to a walk-away is nonsense. Live: it declined 3500 while its own
+        # standing offer was 3760.
+        if (
+            self._best_price
+            and self._last_offer
+            and self._best_price <= self._last_offer
+        ):
+            self._deal_agreed = True
+
         if (
             self._mission_type == "negotiate"
             and self._target
@@ -458,6 +476,15 @@ class ConversationDriver:
             if isinstance(v, bool):
                 if k != self._pending_ask and k not in self._just_asked_recently:
                     logger.info(f"[{self._state.call_id}] ignoring unsolicited {k}={v}")
+                    continue
+                # A False needs actual evidence of denial. Without it we end up
+                # announcing "so it's not available" to someone who never said
+                # that — the single worst failure mode on these calls.
+                if v is False and not _NEGATIVE.search(utterance):
+                    logger.info(
+                        f"[{self._state.call_id}] {k}=False with no denial heard "
+                        f"— treating as unanswered"
+                    )
                     continue
                 if v is False and affirmative:
                     logger.info(
@@ -754,6 +781,9 @@ class ConversationDriver:
                 f"round, or substitute a different figure.\n"
                 f"ALREADY KNOWN — never ask about these again: "
                 f"{json.dumps(self._slots, ensure_ascii=False) if self._slots else 'nothing yet'}\n"
+                f"Anything NOT in that list is UNKNOWN. Never say or imply it is "
+                f"unavailable, sold out, booked, or refused — you have not been told "
+                f"that. State only what is listed above.\n"
                 f"LANGUAGE: reply in {self._reply_lang}, matching the caller.\n"
                 f"LENGTH: ONE spoken sentence, under 25 words. No markdown, no lists.\n"
                 f"NEVER speak a placeholder like [price] or [name] — if you do not have "

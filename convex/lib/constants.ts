@@ -122,23 +122,26 @@ export const MAX_VENDORS_PER_MISSION = 3;
 export const MAX_PERSONAS_PER_DIRECT_MISSION = 5;
 export const MAX_DIALS_PER_MISSION = 5;
 /**
- * Dials per day from ONE ORIGINATING number (ours), not per callee.
+ * Dials per ORIGINATING number per 24h.
  *
- * ⚠️ RAISED FROM 15 TO 100 FOR TEST DAYS. Read this before demoing.
+ * 15 is deliberate: TCCCPR treats a sender as "Bulk" above ~20/day from one
+ * originating number, so we sit visibly under it and can say so on stage.
  *
- * TCCCPR treats a sender as "Bulk" above ~20/day from one originating number,
- * and 15 was chosen to sit deliberately under that. 100 is over it. The
- * justification today is narrow and does not generalise: every dial is going
- * to ONE number whose owner has consented in writing, so the volume is our own
- * test traffic rather than unsolicited contact with businesses.
+ * A long test session against one consented number legitimately exceeds 15,
+ * which is why this is env-overridable rather than edited in place — the
+ * shipped default stays compliant, and any override is visible in
+ * `npx convex env list` instead of hiding in a source file someone forgets
+ * to revert.
  *
- * This does NOT change how often any single business can be rung — that is the
- * separate 24h per-callee throttle in gate.ts, which still applies to everyone
- * without a logged prearranged consent row.
+ *   npx convex env set MAX_DIALS_PER_DAY 100     # testing only
+ *   npx convex env remove MAX_DIALS_PER_DAY      # back to 15
  *
- * 🔴 Put this back to 15 before dialling anything from the `leads` table.
+ * This is separate from the per-CALLEE 24h throttle in gate.ts, which stops
+ * us pestering the same business twice in a day.
  */
-export const MAX_DIALS_PER_NUMBER_PER_DAY = 100;
+export const MAX_DIALS_PER_NUMBER_PER_DAY = Number(
+  process.env.MAX_DIALS_PER_DAY ?? 15,
+);
 export const MAX_DIALS_PER_NUMBER_PER_WEEK = 60;
 export const CALL_WINDOW_START_IST = 10;
 export const CALL_WINDOW_END_IST = 20;
