@@ -43,12 +43,36 @@ export const check = internalQuery({
     if (blocked) return { ok: false, reason: DNC_REASON };
 
     // 2. One attempt per business per 24h.
-    const recent = await ctx.db
-      .query("calls")
-      .withIndex("by_phone", (q) => q.eq("phoneE164", e164))
-      .collect();
-    if (recent.some((c) => (c.startedAt ?? c._creationTime) > now - DAY_MS)) {
-      return { ok: false, reason: ALREADY_CALLED_REASON };
+    //
+    // Exempt ONLY numbers carrying a logged PREARRANGED consent event — the
+    // mechanism GO-LIVE.md already prescribes ("pre-arrange consent with 2–3
+    // real businesses, log via gate:logConsent"). This throttle exists so we
+    // cannot pester a business that never asked to hear from us; a line whose
+    // owner has explicitly agreed to repeated calls is not that business, and
+    // refusing to dial it makes the system untestable against a real PSTN.
+    //
+    // ⚠️ This is the ONLY relaxation in the gate, and it is the weakest of the
+    // checks. Everything above and below still applies unconditionally to
+    // consented numbers: the blocked-prefix list, the +91 restriction, the
+    // 10:00–20:00 IST call window, the permanent DNC list (a callee who bows
+    // out mid-call is never dialled again, consent or not), and the
+    // originating-number daily cap. The exemption is a row in `consentEvents`,
+    // so a spot check can see exactly which numbers have it and why.
+    const consented = (
+      await ctx.db
+        .query("consentEvents")
+        .withIndex("by_phone", (q) => q.eq("phoneE164", e164))
+        .collect()
+    ).some((c) => c.channel === "prearranged" && c.consentGiven);
+
+    if (!consented) {
+      const recent = await ctx.db
+        .query("calls")
+        .withIndex("by_phone", (q) => q.eq("phoneE164", e164))
+        .collect();
+      if (recent.some((c) => (c.startedAt ?? c._creationTime) > now - DAY_MS)) {
+        return { ok: false, reason: ALREADY_CALLED_REASON };
+      }
     }
 
     // 3. Per-originating-number daily cap. Keeps us under TRAI's bulk threshold.

@@ -10,6 +10,7 @@
 
 import type * as calls from "../calls.js";
 import type * as crons from "../crons.js";
+import type * as direct from "../direct.js";
 import type * as fit from "../fit.js";
 import type * as gate from "../gate.js";
 import type * as http from "../http.js";
@@ -40,6 +41,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   calls: typeof calls;
   crons: typeof crons;
+  direct: typeof direct;
   fit: typeof fit;
   gate: typeof gate;
   http: typeof http;

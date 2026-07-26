@@ -1,0 +1,244 @@
+import { v } from "convex/values";
+import { action, internalMutation } from "./_generated/server";
+import { api, internal } from "./_generated/api";
+import { Id } from "./_generated/dataModel";
+import {
+  DEFAULT_LANG,
+  DIAL_STAGGER_MS,
+  isTtsLang,
+  MAX_VENDORS_PER_MISSION,
+  VOICE_BY_LANG,
+  type TtsLang,
+} from "./lib/constants";
+import { formatPretty, toE164 } from "./lib/phone";
+import { MISSION_TYPE, OBJECTIVE, TTS_LANG } from "./schema";
+import type { Brief } from "./intent";
+
+/**
+ * Direct dial — the user already knows the number.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * Discovery (leads → OSM → Places) is the interesting path, but it is also the
+ * fragile one: coverage is thin for some trades, and on stage a category with
+ * three OSM hits is a dead demo. When someone already has the number — their
+ * own landlord, the shop they always use, a consented test line — making them
+ * describe a category so we can rediscover that number is theatre.
+ *
+ * This is the SAME machinery, entered one step later:
+ *
+ *   discovery path:  goal → candidates → gate → vendors → calls → dialNext
+ *   direct path:            ONE number  → gate → vendor  → call  → dialNext
+ *
+ * Everything downstream of the gate is byte-identical to
+ * `orchestrator.runMission`, deliberately: the bridge, the dial chain,
+ * extraction, mission memory and the dashboard cannot tell the two apart.
+ *
+ * THE GATE IS NOT OPTIONAL HERE. A hand-typed number is the *most* likely
+ * source of a mistyped digit, so `internal.gate.check` runs before any row is
+ * written and its reason is returned to the caller verbatim. See §15.
+ */
+
+/** What the console gets back. A refusal is a result, not an exception. */
+export type DirectResult = {
+  ok: boolean;
+  reason?: string;
+  missionId?: Id<"missions">;
+  callIds?: Id<"calls">[];
+  phoneE164?: string;
+  missionType?: "availability" | "quote" | "negotiate";
+  objectives?: Brief["objectives"];
+  language?: string;
+};
+
+/**
+ * Public entry point for the console.
+ *
+ * An action rather than a mutation because deriving objectives from free text
+ * needs `internal.intent.extractBrief`, which is an action (it calls Sarvam).
+ * All the database work is in `place` below, which is a single mutation, so
+ * the gate check and the rows it guards are still one transaction.
+ */
+export const createDirectMission = action({
+  args: {
+    token: v.string(),
+    phoneE164: v.string(),
+    category: v.string(),
+    locality: v.optional(v.string()),
+    /** Free text: "ask if they have an AC room on the 14th and what it costs". */
+    objectives: v.optional(v.string()),
+    targetPriceInr: v.optional(v.number()),
+    language: v.optional(TTS_LANG),
+    /**
+     * Sequential calls to place to this one number. Defaults to 1.
+     *
+     * >1 exists for exactly one reason: mission memory (§1.5.1) only engages
+     * on the SECOND call of a mission, and a direct mission has only one
+     * number to dial. Use it on a consented line to exercise that path. The
+     * console never sends more than 1.
+     */
+    attempts: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<DirectResult> => {
+    const me = await ctx.runQuery(api.users.me, { token: args.token });
+    if (!me) throw new Error("Invalid session");
+
+    // libphonenumber, never a regex — a hand-typed number is precisely the
+    // corrupt input a regex "fixes" into a stranger's phone. See lib/phone.ts.
+    const e164 = toE164(args.phoneE164);
+    if (!e164) {
+      return { ok: false, reason: `"${args.phoneE164}" is not a valid Indian phone number` };
+    }
+
+    const category = args.category.trim() || "business";
+    const locality = (args.locality ?? "").trim();
+
+    // One line of natural language is what `extractBrief` is built to read, so
+    // reassemble the form fields into one rather than inventing a second
+    // extraction prompt that would drift out of sync with the first.
+    const rawRequest = [
+      args.objectives?.trim() ||
+        `find out if ${category} is available and what it costs`,
+      `— ${category}`,
+      locality ? `in ${locality}` : "",
+      args.targetPriceInr ? `, under ₹${args.targetPriceInr}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    let brief: Brief;
+    try {
+      brief = await ctx.runAction(internal.intent.extractBrief, {
+        text: rawRequest,
+        userPrefLang: args.language ?? me.preferredLang ?? DEFAULT_LANG,
+      });
+    } catch (err: any) {
+      return { ok: false, reason: `Couldn't read that goal: ${err?.message ?? err}` };
+    }
+
+    // The form is more authoritative than the model on the fields the user
+    // actually typed. The model only fills the gaps.
+    const language: TtsLang = isTtsLang(args.language)
+      ? args.language
+      : isTtsLang(brief.language)
+        ? brief.language
+        : DEFAULT_LANG;
+    const target = args.targetPriceInr ?? brief.targetPriceInr;
+    // An explicit price ceiling means haggle, whatever the model decided.
+    const missionType = target ? "negotiate" : brief.missionType;
+
+    const res: DirectResult = await ctx.runMutation(internal.direct.place, {
+      userId: me._id,
+      rawRequest,
+      phoneE164: e164,
+      vendorName: `Direct dial · ${formatPretty(e164)}`,
+      missionType,
+      attempts: args.attempts ?? 1,
+      brief: {
+        category,
+        locality: locality || brief.locality || "direct dial",
+        constraints: brief.constraints,
+        objectives: brief.objectives,
+        ...(target ? { targetPriceInr: target, walkAwayInr: brief.walkAwayInr ?? Math.round(target * 1.1) } : {}),
+        language,
+      },
+    });
+
+    return {
+      ...res,
+      objectives: brief.objectives,
+      missionType,
+      language,
+      phoneE164: e164,
+    };
+  },
+});
+
+/**
+ * Gate, then write. One transaction.
+ *
+ * Shape lifted from `orchestrator.runMission`'s tail: gate → vendors →
+ * `calls` rows created up front so the dashboard renders the full roster
+ * immediately → schedule `dialNext` once. Do not "optimise" this into dialling
+ * inline; the chain is advanced from `calls.onProviderStatus` and expects to
+ * own that.
+ */
+export const place = internalMutation({
+  args: {
+    userId: v.id("users"),
+    rawRequest: v.string(),
+    phoneE164: v.string(),
+    vendorName: v.string(),
+    missionType: MISSION_TYPE,
+    attempts: v.number(),
+    brief: v.object({
+      category: v.string(),
+      locality: v.string(),
+      constraints: v.array(v.string()),
+      objectives: v.array(OBJECTIVE),
+      targetPriceInr: v.optional(v.number()),
+      walkAwayInr: v.optional(v.number()),
+      language: TTS_LANG,
+    }),
+  },
+  handler: async (ctx, args): Promise<DirectResult> => {
+    const from = process.env.TWILIO_FROM_NUMBER ?? "";
+
+    // ── The compliance gate. Nothing below this line runs if it refuses. ────
+    const gate = await ctx.runQuery(internal.gate.check, {
+      phone: args.phoneE164,
+      fromNumber: from || undefined,
+    });
+    if (!gate.ok) {
+      return { ok: false, reason: gate.reason ?? "Blocked by the compliance gate" };
+    }
+
+    const attempts = Math.max(1, Math.min(args.attempts, MAX_VENDORS_PER_MISSION));
+
+    const missionId = await ctx.db.insert("missions", {
+      userId: args.userId,
+      rawRequest: args.rawRequest,
+      inputMode: "text",
+      missionType: args.missionType,
+      brief: args.brief,
+      // Checkpoint A is already satisfied: the human typed this exact number
+      // and pressed Call. There is no roster to approve.
+      status: "calling",
+      createdAt: Date.now(),
+    });
+
+    const callIds: Id<"calls">[] = [];
+    for (let i = 0; i < attempts; i++) {
+      const vendorId = await ctx.db.insert("vendors", {
+        missionId,
+        name: attempts > 1 ? `${args.vendorName} (call ${i + 1})` : args.vendorName,
+        phoneE164: args.phoneE164,
+        // The number came from a human, not from discovery. "curated" is the
+        // honest label in the frozen source union — see schema.ts §9.
+        source: "curated",
+        rank: i,
+        gatePassed: true,
+      });
+      callIds.push(
+        await ctx.db.insert("calls", {
+          missionId,
+          vendorId,
+          userId: args.userId,
+          phoneE164: args.phoneE164,
+          fromNumber: from,
+          status: "queued",
+          lang: args.brief.language,
+          voice: VOICE_BY_LANG[args.brief.language],
+          detectedLangs: [],
+          slots: [],
+        }),
+      );
+    }
+
+    await ctx.scheduler.runAfter(DIAL_STAGGER_MS, internal.orchestrator.dialNext, {
+      missionId,
+    });
+
+    return { ok: true, missionId, callIds, phoneE164: args.phoneE164 };
+  },
+});

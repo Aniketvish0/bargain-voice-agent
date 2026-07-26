@@ -263,18 +263,17 @@ class ConversationDriver:
                         f"number exactly; never invent one."
                     )
                 moved = (
-                    f"You already offered {self._last_offer} and they said no, so you are "
-                    f"COMING UP to meet them. Acknowledge that you are moving — 'theek hai, "
-                    f"{offer} kar dijiye' — so it lands as a concession, not a fresh demand. "
+                    f"You already offered less and they refused, so you are COMING UP to "
+                    f"meet them. Frame it as movement on your side, not a fresh demand. "
                     if self._counters > 1
                     else ""
                 )
                 return "counter", (
-                    f"{moved}They quoted {self._best_price}. Do NOT accept it. Make ONE warm, "
-                    f"natural counter-offer of exactly {offer} rupees — a full spoken "
-                    f"sentence a person would actually say, like asking if they can do "
-                    f"{offer} and you'll confirm right away. Never a bare number. "
-                    f"Do NOT mention a budget, a maximum, or what you can afford.{cite}"
+                    f"{moved}Their price is {self._best_price}. Do NOT accept it. "
+                    f"THE ONLY NUMBER YOU MAY SAY IS {offer}. Say {offer}, not "
+                    f"{self._best_price}. Ask warmly, in one natural spoken sentence, "
+                    f"whether they can do {offer}. Do NOT mention a budget or a "
+                    f"maximum.{cite}"
                 )
 
         # 2b. Their price is far above what we can do and the ladder is spent.
@@ -569,9 +568,8 @@ class ConversationDriver:
                 + (
                     f"ACKNOWLEDGE what they just told you inside that same sentence, "
                     f"briefly and naturally — they said {self._just_heard}. Repeat the "
-                    f"key value back as part of your question (\"six thousand — could "
-                    f"you do...\"), NOT as a separate 'did I hear that right?'. One "
-                    f"sentence does both jobs.\n"
+                    f"key value back as part of your question rather than as a separate "
+                    f"'did I hear that right?'. One sentence does both jobs.\n"
                     if self._just_heard
                     else ""
                 )
