@@ -127,6 +127,7 @@ class ConversationDriver:
         self._just_asked_recently: set = set()
         self._odd_price_seen: int | None = None
         self._walked_away = False
+        self._deal_agreed = False
 
         self._pending: list[str] = []
         self._timer: asyncio.Task | None = None
@@ -225,12 +226,20 @@ class ConversationDriver:
                 self._awaiting_counter_reply = True
                 step = (0.80, 0.88, 0.94)[self._counters - 1]
                 offer = max(self._target, int(self._best_price * step))
-                # Monotonic. The ladder steps off THEIR opening quote, so
-                # without this the second rung landed above our own first
-                # offer — live, it went 4800 then 5640, bidding against
-                # itself. Never ask for more than we already asked for.
+                # A CONCESSION LADDER GOES UP, NOT DOWN.
+                #
+                # I previously clamped offers to never increase. That is
+                # backwards and the callee called it out: they refused 5000 and
+                # the agent came back with 4800. Lowering your offer after a
+                # refusal is irrational and reads as insulting — when they say
+                # no, you move TOWARD them.
+                #
+                # The only real ceiling is their own asking price: never offer
+                # at or above what they are already asking, or you are
+                # negotiating against yourself.
                 if self._last_offer is not None:
-                    offer = min(offer, self._last_offer)
+                    offer = max(offer, self._last_offer)
+                offer = min(offer, self._best_price - 1)
                 self._last_offer = offer
                 # NEVER bid above something they have already offered. The
                 # ladder is computed off their quote, so once they concede the
@@ -253,8 +262,15 @@ class ConversationDriver:
                         f"a REAL quote from an earlier call. Say the shop name and the "
                         f"number exactly; never invent one."
                     )
+                moved = (
+                    f"You already offered {self._last_offer} and they said no, so you are "
+                    f"COMING UP to meet them. Acknowledge that you are moving — 'theek hai, "
+                    f"{offer} kar dijiye' — so it lands as a concession, not a fresh demand. "
+                    if self._counters > 1
+                    else ""
+                )
                 return "counter", (
-                    f"They quoted {self._best_price}. Do NOT accept it. Make ONE warm, "
+                    f"{moved}They quoted {self._best_price}. Do NOT accept it. Make ONE warm, "
                     f"natural counter-offer of exactly {offer} rupees — a full spoken "
                     f"sentence a person would actually say, like asking if they can do "
                     f"{offer} and you'll confirm right away. Never a bare number. "
@@ -269,6 +285,7 @@ class ConversationDriver:
             and self._best_price
             and self._best_price > self._target * 1.25
             and self._counters >= 3
+            and not self._deal_agreed  # they accepted our price — that is a WIN
             and not self._walked_away  # latch: say it once, not every turn
         ):
             self._walked_away = True
@@ -524,7 +541,8 @@ class ConversationDriver:
             for o in self._objectives:
                 if o.get("type") == "money":
                     self._slots[o["key"]] = self._last_offer
-            self._counters = 3  # done haggling, go and confirm
+            self._counters = 3      # done haggling
+            self._deal_agreed = True  # ...but we WON, so never walk away now
 
         # We used to close 6s after the readback, which hung up on people
         # mid-sentence. Let the silence watchdog end the call instead - it
