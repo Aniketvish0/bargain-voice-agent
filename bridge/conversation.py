@@ -157,6 +157,7 @@ class ConversationDriver:
         self._speech_lock = asyncio.Lock()
         self._turn_id = 0        # increments on every inbound utterance
         self._spoke_turn = -1    # the turn we last spoke for
+        self._disclosure: str | None = None  # beat two, pending
         self._walked_away = False
         self._deal_agreed = False
 
@@ -189,6 +190,14 @@ class ConversationDriver:
             self._reply.cancel()
         self._pending.clear()
         await self._say(task, text, force=terminal)
+
+    def set_disclosure(self, text: str) -> None:
+        """
+        Beat two. Spoken as our FIRST real turn, prefixed to whatever we say,
+        so the AI disclosure lands within ~10 seconds — before we ask anything
+        of them — without being the very first thing they hear.
+        """
+        self._disclosure = text
 
     def arm_greeting(self) -> None:
         """The opener is turn 0; let it through the gate."""
@@ -727,6 +736,10 @@ class ConversationDriver:
             return
         else:
             self._stall = 0
+
+        if self._disclosure:
+            reply = f"{self._disclosure} {reply}"
+            self._disclosure = None
 
         self._messages.append({"role": "assistant", "content": reply})
         self._convex.turn(self._state.call_id, "agent", reply)

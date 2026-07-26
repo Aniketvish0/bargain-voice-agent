@@ -32,12 +32,33 @@ MissionType = Literal["availability", "quote", "negotiate"]
 # So: purpose first, disclosure as a natural aside, then straight into the
 # first question. All three obligations (AI, recording, consent-to-continue)
 # still land inside the first ~10 seconds, but it sounds like a person.
-DISCLOSURE = {
-    "hi-IN": "नमस्ते! मैं {name} जी का AI असिस्टेंट बोल रहा हूँ — उन्हें {ask} चाहिए।{rec}",
-    "en-IN": "Hello! I'm {name}'s AI assistant — they're looking for {ask}.{rec}",
+# TWO-BEAT OPENING.
+#
+# Leading with "मैं AI असिस्टेंट हूँ" made people hang up before hearing why we
+# rang — it lands like a call-centre script before any human context exists.
+# So beat one is what a person actually says: who they are calling on behalf
+# of, and a check that they have the right person. Beat two, once she has
+# confirmed and is engaged, carries the AI disclosure.
+#
+# The disclosure is NOT dropped. It still lands inside the first ~10 seconds,
+# before anything is asked of them. An AI that lets someone believe they are
+# talking to a human is the one line worth holding.
+OPENER = {
+    "hi-IN": "नमस्ते! मैं {name} जी की तरफ़ से बात कर रहा हूँ — क्या आप {callee} जी बोल रही हैं?",
+    "en-IN": "Hello! I'm calling on behalf of {name} — is this {callee}?",
+}
+# Used when we do not know who should pick up.
+OPENER_NO_NAME = {
+    "hi-IN": "नमस्ते! मैं {name} जी की तरफ़ से बात कर रहा हूँ — एक मिनट बात कर सकते हैं?",
+    "en-IN": "Hello! I'm calling on behalf of {name} — do you have a minute?",
 }
 
-# Appended only when the call is actually being recorded.
+# Beat two: spoken as the first real turn, after they respond to the opener.
+DISCLOSURE = {
+    "hi-IN": "जी, मैं इनका AI असिस्टेंट हूँ।{rec} उन्हें {ask} चाहिए था।",
+    "en-IN": "I'm their AI assistant.{rec} They're looking for {ask}.",
+}
+
 REC_NOTICE = {
     "hi-IN": " कॉल रिकॉर्ड हो रही है।",
     "en-IN": " This call is recorded.",
@@ -103,22 +124,30 @@ def _lang_key(language: str) -> str:
 def opening_line(
     language: str,
     user_first_name: str,
-    ask: str,
-    first_question: str | None = None,   # deprecated, ignored — see note above
-    recording: bool = True,
+    ask: str = "",
+    callee_name: str | None = None,
+    recording: bool = False,
 ) -> str:
     """
-    The first thing said on the call.
-
-    Carries the AI disclosure and the recording notice, and rolls straight into
-    the first real question so the callee immediately knows why their phone
-    rang. Asking "may I ask two things?" first sounds like a script and burns a
-    turn.
+    Beat one. Deliberately contains no AI mention and asks nothing of them —
+    it only establishes who is calling and checks we have the right person.
+    The disclosure follows in beat two (`disclosure_line`).
     """
     k = _lang_key(language)
-    rec = REC_NOTICE[k] if recording else ""
-    return DISCLOSURE[k].format(name=user_first_name, ask=ask, rec=rec)
+    if callee_name:
+        return OPENER[k].format(name=user_first_name, callee=callee_name)
+    return OPENER_NO_NAME[k].format(name=user_first_name)
 
+
+def disclosure_line(
+    language: str,
+    ask: str,
+    recording: bool = False,
+) -> str:
+    """Beat two. The AI disclosure, plus what we are actually after."""
+    k = _lang_key(language)
+    rec = REC_NOTICE[k] if recording else ""
+    return DISCLOSURE[k].format(ask=ask, rec=rec)
 
 def build_system_prompt(
     *,

@@ -46,7 +46,9 @@ from pipecat.transcriptions.language import Language
 
 from convex_client import ConvexClient
 from conversation import ConversationDriver
-from prompts import BOT_ANSWER, BOW_OUT, build_system_prompt, line, opening_line
+from prompts import (
+    BOT_ANSWER, BOW_OUT, build_system_prompt, disclosure_line, line, opening_line,
+)
 
 # ── Verified bulbul:v3 voices. `anushka` is v2 and 400s on v3. ──────────────
 VOICE_BY_LANG: dict[str, str] = {
@@ -375,24 +377,23 @@ def build_pipeline(
         # English inside a Hindi sentence, and the next turn then asked the same
         # thing again in Hindi. The state machine asks it properly, in one
         # language, on the first real turn.
+        # Beat one: no AI mention, no ask — just who is calling and a check
+        # that we have the right person. Beat two carries the disclosure and
+        # fires as our first real turn, once they have engaged.
         greeting = opening_line(
             language,
             state.user_first_name,
-            ask,
-            # Whether we SAY it, not whether we do it. See bridge/.env.
-            recording=os.getenv("ANNOUNCE_RECORDING", "false").lower() == "true",
+            callee_name=brief.get("calleeName"),
         )
-        convex.consent(
-            call_id=state.call_id,
-            phone=state.phone,
-            language=language,
-            disclosure_text=greeting,
+        conversation.set_disclosure(
+            disclosure_line(
+                language,
+                ask,
+                recording=os.getenv("ANNOUNCE_RECORDING", "false").lower() == "true",
+            )
         )
-        convex.turn(state.call_id, "agent", greeting)
-        state.transcript.append({"seq": state.turn_seq, "role": "agent", "text": greeting})
-        state.turn_seq += 1
-        conversation.arm_greeting()            # let turn 0 through the gate
-        conversation.seed_greeting(greeting)   # so it does not greet twice
+        conversation.arm_greeting()
+        conversation.seed_greeting(greeting)
         await task.queue_frame(TTSSpeakFrame(greeting))
 
     @transport.event_handler("on_client_disconnected")
