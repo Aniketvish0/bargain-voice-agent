@@ -47,15 +47,15 @@ export default function Checkpoints() {
         style={{ width: 360, height: 360, top: 60, right: -160, opacity: 0.28 }}
       />
       <div className="wrap">
-        <div className="sec-head">
+        <div className="sec-head rv">
           <h2>Three checkpoints. You stay in the loop.</h2>
           <span className="k">Human-in-the-loop</span>
         </div>
         <p className="lead rv">Orydl pings you only at the moments that matter.</p>
 
-        <div className="checks">
+        <div className="checks" data-stagger="80">
           {CHECKS.map((c) => (
-            <div className="check rv" key={c.letter}>
+            <div className="check rv" data-rv="scale" key={c.letter}>
               <span className="chk-letter" aria-hidden="true">
                 {c.letter}
               </span>

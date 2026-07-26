@@ -2,22 +2,22 @@
 
 import { useEffect, useRef, useState } from "react";
 
-type Row = { who: string; w: string; amt: React.ReactNode };
+type Row = { who: string; w: string; from?: string; to?: number; raw?: string };
 
 const dootRows: Row[] = [
-  { who: "HOTEL A", w: "46%", amt: (<><s>3,200</s>2,750</>) },
-  { who: "HOTEL B", w: "60%", amt: (<><s>3,600</s>2,900</>) },
-  { who: "HOTEL C", w: "34%", amt: (<><s>3,000</s>2,600</>) },
-  { who: "HOTEL D", w: "72%", amt: (<><s>3,900</s>3,150</>) },
-  { who: "HOTEL E", w: "52%", amt: (<><s>3,400</s>2,820</>) },
+  { who: "HOTEL A", w: "46%", from: "3,200", to: 2750 },
+  { who: "HOTEL B", w: "60%", from: "3,600", to: 2900 },
+  { who: "HOTEL C", w: "34%", from: "3,000", to: 2600 },
+  { who: "HOTEL D", w: "72%", from: "3,900", to: 3150 },
+  { who: "HOTEL E", w: "52%", from: "3,400", to: 2820 },
 ];
 
 const humanRows: Row[] = [
-  { who: "CALL 1", w: "80%", amt: "3,200" },
-  { who: "CALL 2", w: "20%", amt: "·" },
-  { who: "CALL 3", w: "8%", amt: "···" },
-  { who: "CALL 4", w: "0%", amt: "·" },
-  { who: "CALL 5", w: "0%", amt: "·" },
+  { who: "CALL 1", w: "80%", to: 3200 },
+  { who: "CALL 2", w: "20%", raw: "·" },
+  { who: "CALL 3", w: "8%", raw: "···" },
+  { who: "CALL 4", w: "0%", raw: "·" },
+  { who: "CALL 5", w: "0%", raw: "·" },
 ];
 
 function QuoteRows({ rows, active }: { rows: Row[]; active: boolean }) {
@@ -29,7 +29,14 @@ function QuoteRows({ rows, active }: { rows: Row[]; active: boolean }) {
           <span className="bar">
             <i className="fill" style={{ width: active ? r.w : "0%" }} />
           </span>
-          <span className="amt">{r.amt}</span>
+          <span className="amt">
+            {r.from && <s>{r.from}</s>}
+            {r.to != null ? (
+              <span data-count={r.to}>0</span>
+            ) : (
+              r.raw
+            )}
+          </span>
         </div>
       ))}
     </>
@@ -70,7 +77,7 @@ export default function Leverage() {
         style={{ width: 400, height: 400, top: 40, left: -180, opacity: 0.3 }}
       />
       <div className="wrap">
-        <div className="sec-head">
+        <div className="sec-head rv">
           <h2>Parallel competitive leverage</h2>
           <span className="k">The differentiator</span>
         </div>
@@ -79,8 +86,8 @@ export default function Leverage() {
           <b>A human physically cannot do this.</b>
         </p>
 
-        <div className="lev-grid rv" ref={ref}>
-          <div className="lev-cell doot">
+        <div className="lev-grid" ref={ref} data-stagger="90">
+          <div className="lev-cell doot rv" data-rv="scale">
             <span className="tag">◆ ORYDL · 5 CALLS LIVE</span>
             <h3>Every quote, held at once</h3>
             <p>One quote becomes the lever against the next.</p>
@@ -88,7 +95,7 @@ export default function Leverage() {
               <QuoteRows rows={dootRows} active={active} />
             </div>
           </div>
-          <div className="lev-cell human">
+          <div className="lev-cell human rv" data-rv="scale">
             <span className="tag">◇ YOU · ONE THUMB</span>
             <h3>You, with your thumb and 40 minutes</h3>
             <p>One call at a time. Nobody&apos;s competing.</p>

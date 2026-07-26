@@ -33,16 +33,16 @@ export default function VoiceStack() {
         style={{ width: 420, height: 420, top: 20, left: -180, opacity: 0.28 }}
       />
       <div className="wrap">
-        <div className="sec-head">
+        <div className="sec-head rv">
           <h2>Powered by the Sarvam voice stack</h2>
           <span className="k">The engine</span>
         </div>
         <p className="lead rv">
           Four models. One fluent negotiator on every call.
         </p>
-        <div className="stack-grid rv">
+        <div className="stack-grid" data-stagger="72">
           {models.map((m) => (
-            <div className="sv" key={m.idx}>
+            <div className="sv rv" data-rv="scale" key={m.idx}>
               <div className="name">{m.name}</div>
               <div className="role">{m.role}</div>
               <p>{m.body}</p>

@@ -1,6 +1,6 @@
 export default function Hero() {
   return (
-    <section className="hero">
+    <section className="hero" data-stagger="90">
       <div
         className="blob peri"
         style={{ width: 520, height: 520, top: -160, right: -120 }}
@@ -10,7 +10,7 @@ export default function Hero() {
         style={{ width: 380, height: 380, top: 120, left: -160, opacity: 0.35 }}
       />
       <div className="wrap hero-top">
-        <h1 className="hero-h rv">
+        <h1 className="hero-h rv" data-rv="blur">
           You give it one goal. It calls{" "}
           <span className="em">ten places at once.</span>
         </h1>
@@ -36,9 +36,11 @@ export default function Hero() {
       </div>
 
       <div className="wrap">
-        <div className="hero-photo rv">
+        <div className="hero-photo rv" data-rv="fade">
           <img
             className="photo-img"
+            data-parallax="68"
+            data-parallax-scale="1.2"
             src="/assets/golden-temple-dusk.jpg"
             alt="A boatman on still water before the Golden Temple at dusk in Amritsar, rendered as a signal-orange duotone."
             loading="eager"

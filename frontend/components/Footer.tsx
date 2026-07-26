@@ -16,11 +16,11 @@ export default function Footer() {
             opacity: 0.5,
           }}
         />
-        <div className="wrap">
-          <div className="deva">The calling envoy</div>
-          <h2>Send an envoy. Skip the phone.</h2>
-          <p>One goal in, the best deal out.</p>
-          <div className="cta">
+        <div className="wrap" data-stagger="80">
+          <div className="deva rv">The calling envoy</div>
+          <h2 className="rv">Send an envoy. Skip the phone.</h2>
+          <p className="rv">One goal in, the best deal out.</p>
+          <div className="cta rv">
             <a
               href="https://t.me/orydl_bot"
               target="_blank"
@@ -39,8 +39,8 @@ export default function Footer() {
       {/* FOOTER */}
       <section className="cyclefoot">
         <Flourish paddingTop={0} />
-        <div className="wrap ko-wrap">
-          <h2 className="knockout" aria-label="Orydl">ORYDL</h2>
+        <div className="wrap ko-wrap" data-parallax="60">
+          <h2 className="knockout rv" aria-label="Orydl">ORYDL</h2>
         </div>
       </section>
     </>

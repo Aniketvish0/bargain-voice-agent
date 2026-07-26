@@ -25,13 +25,13 @@ export default function Trust() {
   return (
     <section className="trust">
       <div className="wrap">
-        <div className="sec-head">
+        <div className="sec-head rv">
           <h2>Consent, built in, not bolted on.</h2>
           <span className="k">Trust</span>
         </div>
-        <div className="tlist rv">
+        <div className="tlist" data-stagger="72">
           {items.map((it) => (
-            <div className="titem" key={it.h}>
+            <div className="titem rv" data-rv="scale" key={it.h}>
               <div>
                 <h5>{it.h}</h5>
                 <p>{it.p}</p>

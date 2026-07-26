@@ -23,7 +23,7 @@ export default function Console() {
   return (
     <section className="composition" id="console">
       <div className="wrap">
-        <div className="sec-head">
+        <div className="sec-head rv">
           <h2>This is Orydl, mid-dispatch.</h2>
           <span className="k">Live console</span>
         </div>
@@ -33,7 +33,12 @@ export default function Console() {
 
         <div className="stage rv">
           <div className="bg" aria-hidden="true">
-            <img src="/assets/wallpaper-valley.jpg" alt="" />
+            <img
+              src="/assets/wallpaper-valley.jpg"
+              alt=""
+              data-parallax="82"
+              data-parallax-scale="1.22"
+            />
             <div className="vig" />
           </div>
 
@@ -62,7 +67,8 @@ export default function Console() {
                 <div className="bestcard">
                   <div className="lb">◆ Best deal so far</div>
                   <div className="price">
-                    ₹2,750<s>₹3,200</s>
+                    <span data-count="2750" data-count-prefix="₹">₹0</span>
+                    <s>₹3,200</s>
                   </div>
                   <div className="who">Hotel Pearl Palace · Old City</div>
                 </div>
@@ -84,7 +90,7 @@ export default function Console() {
                   </div>
                   <div className="pr">
                     <s>3,200</s>
-                    <b>2,750</b>
+                    <b data-count="2750">0</b>
                   </div>
                   <button className="book">BOOK</button>
                 </div>
@@ -96,7 +102,7 @@ export default function Console() {
                   </div>
                   <div className="pr">
                     <s>3,400</s>
-                    <b>2,900</b>
+                    <b data-count="2900">0</b>
                   </div>
                   <span className="pill neg">Negotiating</span>
                 </div>
@@ -108,7 +114,7 @@ export default function Console() {
                   </div>
                   <div className="pr">
                     <s>3,000</s>
-                    <b>2,680</b>
+                    <b data-count="2680">0</b>
                   </div>
                   <span className="pill anchor">Anchoring</span>
                 </div>
@@ -119,7 +125,7 @@ export default function Console() {
                     <div className="sub">Breakfast +₹500, off policy</div>
                   </div>
                   <div className="pr">
-                    <b>2,880</b>
+                    <b data-count="2880">0</b>
                   </div>
                   <span className="pill ckb">Checkpoint B</span>
                 </div>
@@ -221,7 +227,8 @@ export default function Console() {
                 <div className="dealcard">
                   <div className="lb">◆ Best deal so far</div>
                   <div className="p">
-                    ₹2,750 <s>₹3,200</s>
+                    <span data-count="2750" data-count-prefix="₹">₹0</span>{" "}
+                    <s>₹3,200</s>
                   </div>
                   <div className="m">
                     Pearl Palace · Hindi · beat 4 quotes · recording attached 🎧
