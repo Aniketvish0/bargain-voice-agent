@@ -28,6 +28,7 @@ import type * as tgApi from "../tgApi.js";
 import type * as transcripts from "../transcripts.js";
 import type * as users from "../users.js";
 import type * as vendors from "../vendors.js";
+import type * as webconsole from "../webconsole.js";
 
 import type {
   ApiFromModules,
@@ -56,6 +57,7 @@ declare const fullApi: ApiFromModules<{
   transcripts: typeof transcripts;
   users: typeof users;
   vendors: typeof vendors;
+  webconsole: typeof webconsole;
 }>;
 
 /**

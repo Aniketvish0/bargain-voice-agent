@@ -55,6 +55,14 @@ CLOSE = {
 }
 
 
+def _similar(a: str, b: str) -> float:
+    """Cheap token-overlap similarity. Good enough to catch a reworded repeat."""
+    ta, tb = set(a.lower().split()), set(b.lower().split())
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / max(len(ta), len(tb))
+
+
 class ConversationDriver:
     """One instance per call. Owns the message history and the reply loop."""
 
@@ -73,6 +81,7 @@ class ConversationDriver:
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=4.0))
         self._last_activity = time.monotonic()
         self._watchdog: asyncio.Task | None = None
+        self._stall = 0  # consecutive near-identical replies
 
     # ── input ───────────────────────────────────────────────────────────────
 
@@ -146,6 +155,28 @@ class ConversationDriver:
 
         if not reply:
             return
+
+        # ── Loop breaker ────────────────────────────────────────────────────
+        # Telling the model "don't repeat yourself" is not enough: it rewords
+        # slightly and sails past a verbatim check. Observed live — it said
+        # "तो per night rate ₹6000 है।" five times while the callee answered
+        # "Yes" to each. Compare on content, and after two near-identical
+        # replies accept that this thread is exhausted and close the call.
+        # A stranger should never be trapped in a loop with our agent.
+        last_agent = next(
+            (m["content"] for m in reversed(self._messages) if m["role"] == "assistant"),
+            "",
+        )
+        if last_agent and _similar(reply, last_agent) > 0.7:
+            self._stall += 1
+            logger.info(f"[{self._state.call_id}] near-repeat #{self._stall}: {reply[:60]!r}")
+            if self._stall >= 2:
+                await self._say(task, CLOSE.get(self._state.language, CLOSE["en-IN"]))
+                await self._hangup(task)
+                return
+        else:
+            self._stall = 0
+
         self._messages.append({"role": "assistant", "content": reply})
         self._convex.turn(self._state.call_id, "agent", reply)
         self._state.transcript.append(
