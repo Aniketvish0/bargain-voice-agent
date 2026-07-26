@@ -127,19 +127,23 @@ def main() -> int:
             addr = ", ".join(
                 filter(None, [tags.get("addr:street"), tags.get("addr:suburb"), tags.get("addr:city")])
             )
-            rows.append({
+            row = {
                 "category": category,
                 "locality": locality,
                 "city": city,
                 "name": name[:80],
                 "phoneE164": e164,
-                "address": addr or None,
                 "sourceUrl": f"https://www.openstreetmap.org/{el.get('type')}/{el.get('id')}",
                 "source": "osm",
                 # NOT consented. The compliance gate still applies, and the demo
                 # should use numbers you have actually spoken to. See §15.
                 "consentObtained": False,
-            })
+            }
+            # Convex v.optional() means the key is ABSENT, not null. Emitting
+            # an explicit null fails the import with a validator error.
+            if addr:
+                row["address"] = addr
+            rows.append(row)
             kept += 1
         print(f"{kept:4d} with valid numbers   (from {len(elements)} elements)")
         time.sleep(1)  # be polite to a free public API
