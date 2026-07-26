@@ -12,6 +12,10 @@ You give it one goal. It calls real businesses on the real phone network, asks a
 [![License: MIT](https://img.shields.io/badge/License-MIT-111111?style=flat-square)](LICENSE)
 [![Spec](https://img.shields.io/badge/Spec-BUILD--SPEC.md-2B6CB0?style=flat-square)](docs/BUILD-SPEC.md)
 
+<br/>
+
+<img src="docs/assets/hero.png" alt="orydl landing: you give it one goal, it calls several places and negotiates" width="900"/>
+
 </div>
 
 ---
@@ -29,6 +33,16 @@ orydl calls several places for one goal and **keeps every answer**. That lets it
 > **Cross-call leverage.** Call three cites a real price that call one actually produced ninety seconds earlier, *"Calangute is quoting 3,200, can you do better?"* You call serially and forget the first quote by the fourth call. orydl carries every quote forward, and each call is strictly stronger than the last.
 
 Every citation resolves to a row in the database with a phone number, a timestamp, and the exact transcript line where the price was spoken. Nothing is invented.
+
+## The live board
+
+One goal on Telegram on the right. Every call, every quote, and every negotiation state on the left, updating as the calls run. The best price so far is pushed into every open call, so each one is strictly stronger than the last.
+
+<div align="center">
+
+<img src="docs/assets/call-board.png" alt="orydl live call board: parallel negotiations, cross-call leverage, and a Telegram thread showing checkpoint B" width="960"/>
+
+</div>
 
 ## Three mission types, one conversation
 
