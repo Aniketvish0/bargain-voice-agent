@@ -5,16 +5,17 @@
 Sarvam Epoch Buildathon · GrowthX · Sunday 26 July 2026
 Build sprint 10:30–16:30 IST · **Freeze 16:00 · Submit 16:10** (not 16:29)
 
-> **Relationship to the other docs.** [`PRD.md`](PRD.md) owns the *product* — problem, user, JTBD,
-> differentiators, success metrics. **This document owns the *technical decisions*** and is the
-> authority where the two disagree, because it is backed by primary-source verification done today.
-> Section 0.1 lists exactly where they disagree and why. Read that first.
+> **This is the single source of truth.** It replaces the earlier planning docs
+> (`PRD.md`, `ARCHITECTURE.md`, `BARGAINING.md`, `DATA_MODEL.md`, `DEMO.md`, `ROADMAP.md`,
+> `RUBRIC.md`), whose useful content has been folded in here and whose technical claims are
+> corrected in §0.1. They remain in git history at commit `1f32fc3` if you need them.
+> **Do not create a second spec.** Two specs and five parallel agents is how a build dies.
 
 ---
 
-## 0.1 CORRECTIONS TO THE PLANNING DOCS — read before writing code
+## 0.1 DECISIONS THAT OVERRIDE THE EARLIER PLANNING DOCS
 
-Five things in `PRD.md` / `ARCHITECTURE.md` will cost you time if followed as written.
+If you read the original docs, or an agent was primed on them, these five things will cost you time.
 
 > ### 🔴 BEFORE ANY OF THAT — two Sarvam defaults that silently kill the demo
 >
@@ -36,10 +37,10 @@ Five things in `PRD.md` / `ARCHITECTURE.md` will cost you time if followed as wr
 
 ### ① Wrong Sarvam model names — fix this first, it misroutes every agent
 
-`PRD.md` §5 names **Saarika**, **Sarvam-M**, and **Saaras** as three separate components. That
+The old docs named **Saarika**, **Sarvam-M**, and **Saaras** as three separate components. That
 mapping is out of date and will send agents to deprecated endpoints.
 
-| PRD.md says | Actually use | Why |
+| Old docs said | Actually use | Why |
 |---|---|---|
 | Saarika (streaming ASR) | **`saaras:v3`** | Saaras v3 *is* the current STT model — 23 languages, code-mixed, and it does both transcription and translation via the `mode` kwarg. Saarika is the older line. |
 | Sarvam-M (LLM) | **`sarvam-30b`** live, **`sarvam-105b`** offline | Sarvam-M is the older open-weights model. 30B for in-call turns (latency), 105B for extraction and summary. Never put 105B in the live loop. |
@@ -49,7 +50,7 @@ See §7 for the full endpoint table.
 
 ### ② The telephony open question is closed
 
-`PRD.md` §8 lists *"confirm whether Sarvam ships a telephony/voice-agent runtime"* as the biggest
+The old `PRD.md` listed *"confirm whether Sarvam ships a telephony/voice-agent runtime"* as the biggest
 unknown. **Answer: it does not, and you don't need it.**
 
 Sarvam publishes an official Twilio integration guide using Pipecat
@@ -69,7 +70,7 @@ is silent. See §3.
 
 ### ④ Parallel calling: correct as an ambition, wrong as the MVP
 
-`PRD.md` §3 makes *"fan-out, not one call"* and *real-time* cross-call leverage the star mechanic.
+The old `PRD.md` made *"fan-out, not one call"* and *real-time* cross-call leverage the star mechanic.
 The leverage mechanic is absolutely right and is the best idea in the product. **But parallel is the
 harder way to get it, and it is not what you should build first.**
 
@@ -102,7 +103,7 @@ it is worth more than the dashboard polish. If not, cut it without regret.
 
 ### Also worth knowing
 
-- `PRD.md` §4 targets *"MVP running by 12:15"*. Check the clock against §17 and re-baseline out loud.
+- The old `PRD.md` targeted *"MVP running by 12:15"*. Check the clock against §17 and re-baseline out loud.
 - `convex/schema.ts` is currently empty with `schemaValidation: false`. That's a defensible hackathon
   choice, but with five parallel lanes a **frozen, validated schema prevents more bugs than it
   causes**. §9 has one ready to paste. Decide once, now, and don't revisit it at 15:00.
@@ -130,9 +131,61 @@ compress: the go/no-go gate at §12 must still be green by 12:30 or you switch t
 
 ## 1. THE PRODUCT
 
-**One line:** You tell Doot what you want to buy and what you want to pay. It finds real
-businesses, calls them on the actual phone network, negotiates in the language the shopkeeper
-speaks, and sends you back the best deal.
+*(This section absorbs the product framing from the original `PRD.md`, which has been consolidated
+into this document.)*
+
+**One line:** You tell Doot what you need to find out or buy. It finds real businesses, calls them
+on the actual phone network, asks and negotiates in the language the shopkeeper speaks, and sends
+you back the answer.
+
+The name is *doot* (दूत) — an envoy sent to speak on your behalf.
+
+### The problem
+
+Getting one real answer out of the offline world still means **you, on the phone, one call at a
+time**, usually in a language you half-speak. Eight hotels for availability and price. A plumber, a
+clinic slot, a part in stock, a catering quote. The only interface is a phone number and a human who
+answers in Marathi.
+
+Because you do it serially, you **can't compare live** and you **can't play quotes against each
+other**. By the fourth call you've forgotten the first, so you take a worse answer than you had to.
+
+India's offline economy is voice-first and vernacular-first. There is no API for the family-run
+hotel. **The API is a phone call in Hindi with background noise, and the pricing endpoint is a
+negotiation.**
+
+**Honest competitor:** *you, with your thumb and forty minutes.* Google Duplex made one call, in US
+English, and never shipped in India.
+
+### The job to be done
+
+> Given a goal, a place to look, and what I care about — get me a correct, comparable answer from
+> each business, negotiated where that applies, **without me making a single call.**
+
+**Definition of done:**
+1. A structured, comparable result per business — with recording and transcript.
+2. A ranked comparison delivered to the user, best first.
+3. A clean human handoff for the final personal step (payment, ID, confirmation).
+
+### Human in the loop — two checkpoints, not full autonomy
+
+| Point | When | What the user does |
+|---|---|---|
+| **A** | Before dialling | Approve the plan: who it calls, what it asks, target and walk-away. **Mandatory — nothing dials without a tap.** |
+| **C** | At the end | Pick the winner. Doot hands over the final personal step. |
+| *B (stretch)* | Mid-call | Business asks something off-policy → pause that call, Yes/No on Telegram, resume with *"ek minute please"*. **Gated behind G3** — see §0.1 ⑤. |
+
+### Non-goals for the hackathon
+
+No autonomous payment. No sharing the user's ID or KYC. No cold outreach at scale — one user goal, a
+bounded call list, consent-first. No general-purpose assistant: **one job done deeply beats ten done
+shallow.**
+
+### Success metrics
+
+- **Task success ≥90% across 3 repeated runs** — every business called, every required slot filled.
+- **Negotiation delta** — average % below first-quoted price. This is the headline demo number.
+- **Human touches ≤3 taps.**
 
 **The demo sentence that wins:** *An AI ran a live reverse auction over the PSTN and used one
 stranger's quote against another's.*
@@ -164,9 +217,88 @@ dashboard where every transcript is readable.
 
 ### Scope boundary
 
-Doot **negotiates and reports**. It does **not** book, reserve, pay, or commit. The agent says:
+Doot **finds out and reports**. It does **not** book, reserve, pay, or commit. The agent says:
 *"I'll pass this to the customer, they'll confirm directly."* This is both an ethical line and a
 scope cut that saves you two hours.
+
+---
+
+## 1.5 MISSION TYPES — the generalisation that makes this a product
+
+Haggling is not the only reason to call a business. Most of the time you just want to **know
+something that only exists behind a phone number**:
+
+- *Do you have a 250L fridge in stock?*
+- *Table for 20 on Saturday at 8?*
+- *Is the doctor taking walk-ins today?*
+- *Do you deliver to 560102?*
+- *Is the AC room free on the 14th?*
+
+### The key insight: the three mission types **nest**
+
+```
+availability  ⊂  quote  ⊂  negotiate
+```
+
+They are not three products. They are **the same conversation, stopped at different points.**
+`missionType` just sets where the agent stops.
+
+| `missionType` | Conversation | Typical length | Reliability |
+|---|---|---|---|
+| **`availability`** | greet → disclose → **ask** → confirm → thank | 45–90 s | ⭐ highest |
+| **`quote`** | …+ ask the price, don't haggle | 90–150 s | high |
+| **`negotiate`** | …+ anchor, counter ×≤3, concede, close | 3–4 min | lowest |
+
+**This is a subset, not a new feature.** Same pipeline, same Convex tables, same dashboard. What
+changes is one prompt block, which slots the extractor fills, and which comparison view renders.
+**Budget ~40 minutes**, and take them from the dashboard-polish budget, not from the bridge.
+
+### Why this is worth building today
+
+1. **It de-risks the entire demo.** An availability call is short, has no adversarial dynamic, and
+   almost always succeeds. If negotiation is flaky at 16:00, **you still have a working product to
+   show.** This is the cheapest insurance in the build.
+2. **It widens Impact (1.5×).** Far more people need "is it in stock" than "haggle for me". Haggling
+   is also socially normal in some categories and awkward in others — availability is universally
+   appropriate.
+3. **It makes the hotel demo one clean arc** instead of two disconnected ones (see below).
+4. **It makes `learnedPrefs` visibly useful** — the Memory & Context line — because the objectives
+   carry across missions ("always asks about AC", "always asks about parking").
+
+### The unifying mechanic: **objective slots**
+
+Every mission declares **what it must come back knowing.** The agent's job is to fill every required
+slot; the CONFIRM read-back verifies them out loud. Negotiation is simply slot-filling *plus a price
+policy on the money slot.*
+
+```ts
+objectives: [
+  { key: "hasAcRoom",     ask: "AC room available on the 14th?", type: "boolean", required: true  },
+  { key: "pricePerNight", ask: "rate per night",                 type: "money",   required: true  },
+  { key: "breakfast",     ask: "is breakfast included?",         type: "boolean", required: false },
+]
+```
+
+The intent extractor (`sarvam-30b`, `json_object`) produces this list from the user's one-line
+request. **This is also the natural place to ask the user a clarifying question** — if a required
+slot can't be inferred, the Telegram confirmation card asks for it before dialling.
+
+> **This is why the read-back turn (§13 Block 6) is the centre of the design, not a nicety.**
+> It is how *every* mission type closes: the agent reads back every filled slot in one clean
+> sentence and gets a yes. One high-signal line in the transcript, for every mission type, every
+> time.
+
+### The demo consequence — one call, three acts
+
+The hotel mission chains all three naturally, which is exactly how a human would make the call:
+
+> **"Is there an AC room free on the 14th?"** → *availability*
+> **"What's the rate per night?"** → *quote*
+> **"Calangute is quoting 3,200 — can you do 3,000?"** → *negotiate*
+
+**One phone call. Three capabilities. Zero extra demo time.** Run it as `missionType: "negotiate"`
+and the earlier acts happen on the way through. If the negotiation act fails live, the first two
+still landed and the call still produced a real answer.
 
 ---
 
@@ -668,12 +800,23 @@ export default defineSchema({
     userId: v.id("users"),
     rawRequest: v.string(),
     inputMode: v.union(v.literal("voice"), v.literal("text")),
+    // See §1.5 — availability ⊂ quote ⊂ negotiate. Controls where the conversation stops.
+    missionType: v.union(v.literal("availability"), v.literal("quote"), v.literal("negotiate")),
     brief: v.object({
       category: v.string(),
       locality: v.string(),
       constraints: v.array(v.string()),
-      targetPriceInr: v.number(),
-      walkAwayInr: v.number(),
+      // Objective slots the agent must come back having filled. §1.5.
+      objectives: v.array(v.object({
+        key: v.string(),          // "hasAcRoom"
+        ask: v.string(),          // "AC room available on the 14th?"
+        type: v.union(v.literal("boolean"), v.literal("money"),
+                      v.literal("date"), v.literal("number"), v.literal("text")),
+        required: v.boolean(),
+      })),
+      // Only meaningful when missionType === "negotiate".
+      targetPriceInr: v.optional(v.number()),
+      walkAwayInr: v.optional(v.number()),
       language: TTS_LANG,
     }),
     status: v.union(v.literal("pending"), v.literal("discovering"),
@@ -711,8 +854,17 @@ export default defineSchema({
     lang: TTS_LANG,
     voice: v.string(),
     detectedLangs: v.array(v.string()),
+    // Generic slot answers — works for every missionType. §1.5.
+    slots: v.array(v.object({
+      key: v.string(),
+      value: v.any(),                         // boolean | number | string
+      valueVerbatim: v.optional(v.string()),  // what was actually said — cross-check source
+      confidence: v.union(v.literal("high"), v.literal("medium"), v.literal("low")),
+      turnSeq: v.optional(v.number()),        // links the answer to its transcript line
+    })),
     openingQuoteInr: v.optional(v.number()),  // ← the negotiation ARC, not just a price
     finalQuoteInr: v.optional(v.number()),
+    effectivePriceInr: v.optional(v.number()), // quote + delivery + GST. RANK ON THIS. §13.
     quoteTurnSeq: v.optional(v.number()),     // links the price to its transcript line
     terms: v.optional(v.string()),
     contactName: v.optional(v.string()),
@@ -1250,12 +1402,29 @@ TRAI's Feb 2025 amendment classifies AI-generated voices as "artificial" voices 
 rules. **Disclosure costs three seconds, removes the entire ethical objection, and converts your
 biggest liability into an Impact talking point.**
 
-#### Block 2 — Objective and BATNA
+#### Block 2 — Objectives, and the BATNA
+
+**Always present — this is the slot list from §1.5:**
+
+```
+You must come back knowing these. Ask them one at a time, in this order:
+{{#objectives}}
+  - {{ask}}{{#required}}  (REQUIRED){{/required}}
+{{/objectives}}
+Do not move on until every REQUIRED item has a clear answer.
+If they cannot answer one, say so plainly rather than guessing.
+```
+
+**Appended only when `missionType === "negotiate"`:**
 
 ```
 Target ₹{{targetPriceInr}}. Walk-away ₹{{walkAwayInr}}.
 If they will not go below the walk-away price, thank them politely and end the call.
 ```
+
+⚠️ **For `availability` and `quote` missions, Blocks 3, 4 and 5 are omitted entirely.** The agent
+asks, confirms, and thanks. Do not let a `quote` mission drift into haggling — it makes short calls
+long and is the fastest way to get hung up on.
 
 #### Block 3 — Anti-anchoring
 
@@ -1428,8 +1597,15 @@ put 105B in the live loop.
 
 **Stage 1 — the LLM returns both a normalised integer AND the verbatim string it read it from.**
 
+Every mission type fills `slots`; only `negotiate` fills the price-arc fields.
+
 ```json
 {
+  "slots": [
+    {"key": "hasAcRoom",     "value": true, "valueVerbatim": "haan ji AC room hai", "confidence": "high", "turnSeq": 6},
+    {"key": "pricePerNight", "value": 3000, "valueVerbatim": "teen hazaar",         "confidence": "high", "turnSeq": 14},
+    {"key": "breakfast",     "value": false,"valueVerbatim": "breakfast alag hai",  "confidence": "medium","turnSeq": 9}
+  ],
   "openingQuoteInr": 27500,
   "finalQuoteInr": 24200,
   "priceVerbatim": "chaubees hazaar do sau",
@@ -1553,6 +1729,24 @@ Sharma Electronics
 Struck-through opening → animated drop → final. Clicking the final price **scrolls the transcript to
 `quoteTurnSeq`** — the exact line where the price was agreed. That link between number and evidence
 is what makes it feel real rather than generated.
+
+### The Answer Matrix — render this for `availability` and `quote` missions
+
+Same component slot, different shape. Vendors down the side, objectives across the top:
+
+```
+                      AC room 14th   Rate/night   Breakfast   Parking
+  Sea Breeze Resort        ✅          ₹3,000        ❌          ✅
+  Calangute Inn            ✅          ₹3,200        ✅          ❌
+  Palm Grove               ❌            —           —           —
+```
+
+Every cell is clickable and **scrolls the transcript to the `turnSeq` where that answer was
+spoken**. Grey a cell when `confidence: "low"`.
+
+**On a projector this reads better than the price ladder** — a judge parses a matrix in two seconds.
+It is also the honest view when a mission isn't about money at all. Pick the view from
+`mission.missionType`; for `negotiate`, show the matrix *and* the arc.
 
 ### Language / voice picker
 

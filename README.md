@@ -2,15 +2,15 @@
 
 # Doot
 
-**The calling envoy that negotiates for you.**
+**The calling envoy that finds out, and negotiates, for you.**
 
-You give it one goal. It calls ten places at once, haggles each one down in their own language, and brings back the best deal while you do something else.
+You give it one goal. It calls real businesses on the real phone network, asks and haggles in their own language, and brings back one ranked answer sheet while you do something else.
 
 [![Built with Sarvam AI](https://img.shields.io/badge/Built%20with-Sarvam%20AI-FF6B00?style=flat-square)](https://www.sarvam.ai/)
 [![Backend: Convex](https://img.shields.io/badge/Backend-Convex-EE342F?style=flat-square)](https://www.convex.dev/)
 [![Interface: Telegram](https://img.shields.io/badge/Interface-Telegram-229ED9?style=flat-square)](https://core.telegram.org/bots)
 [![License: MIT](https://img.shields.io/badge/License-MIT-111111?style=flat-square)](LICENSE)
-[![Status](https://img.shields.io/badge/Status-Hackathon%20Build-2B6CB0?style=flat-square)](docs/ROADMAP.md)
+[![Spec](https://img.shields.io/badge/Spec-BUILD--SPEC.md-2B6CB0?style=flat-square)](docs/BUILD-SPEC.md)
 
 </div>
 
@@ -18,102 +18,90 @@ You give it one goal. It calls ten places at once, haggles each one down in thei
 
 ## Overview
 
-Getting one real answer out of the offline world still means you, on the phone, one call at a time, in a language you half speak. Doot removes that entirely. You send a goal and a budget over Telegram. Doot places several outbound calls in parallel, holds a natural conversation with each business in their own language, negotiates on price, and returns a single ranked deal sheet. You approve, it books.
+Getting one real answer out of the offline world still means you, on the phone, one call at a time, in a language you half speak. Doot removes that. You send a goal over Telegram — text or a voice note. Doot places outbound calls, holds a natural conversation with each business in their own language, gets the answers, negotiates where that applies, and returns a single ranked sheet.
 
 The name comes from *doot* (दूत), an envoy sent to speak on your behalf.
 
 ## The core idea
 
-Doot calls N places at the same time and keeps every quote live. That lets it do the one thing a person on a phone cannot:
+Doot calls several places for one goal and **keeps every answer**. That lets it do the thing a person on a phone cannot:
 
-> **Parallel competitive leverage.** While still on the line with one business, Doot references the best competing quote it is holding from another live call. "The place nearby is offering 3,600. Can you do better?" You call serially and forget the first quote by the fourth call. Doot runs the whole set as a live auction and drives every price down at once.
+> **Cross-call leverage.** Call three cites a real price that call one actually produced ninety seconds earlier — *"Calangute is quoting 3,200, can you do better?"* You call serially and forget the first quote by the fourth call. Doot carries every quote forward, and each call is strictly stronger than the last.
 
-This single mechanic is the product. Everything else supports it.
+Every citation resolves to a row in the database with a phone number, a timestamp, and the exact transcript line where the price was spoken. Nothing is invented.
 
-## Screenshots
+## Three mission types, one conversation
 
-> Screenshots and a demo recording will be added here.
+Haggling isn't the only reason to call. Most of the time you just want to know something that only exists behind a phone number — *is it in stock, is the room free, do you deliver to 560102.*
 
-<div align="center">
+```
+availability  ⊂  quote  ⊂  negotiate
+```
 
-<table>
-  <tr>
-    <td align="center"><img src="docs/assets/telegram-goal.png" alt="Sending a goal to Doot on Telegram" width="380"/><br/><sub>1. Send a goal, approve the plan</sub></td>
-    <td align="center"><img src="docs/assets/live-calls.png" alt="Live parallel calls with negotiation" width="380"/><br/><sub>2. Parallel calls negotiating live</sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/assets/deal-sheet.png" alt="Ranked deal sheet returned on Telegram" width="380"/><br/><sub>3. Ranked deal sheet</sub></td>
-    <td align="center"><img src="docs/assets/booking.png" alt="Confirmed booking with confirmation number" width="380"/><br/><sub>4. Booked, with confirmation number</sub></td>
-  </tr>
-</table>
+These are not three products. They're the same conversation stopped at different points.
 
-</div>
+| Type | Conversation | Length |
+| :--- | :--- | :--- |
+| `availability` | greet → disclose → ask → confirm → thank | 45–90 s |
+| `quote` | + ask the price, don't haggle | 90–150 s |
+| `negotiate` | + anchor, counter, concede, close | 3–4 min |
+
+Every mission declares **objective slots** it must come back having filled. The agent fills them, then reads the whole deal back in one clean sentence and gets a yes.
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    U["You on Telegram<br/>text or voice note"] --> ORC["Orchestrator<br/>Sarvam-M"]
-    ORC -->|"approve plan"| U
-    ORC --> Q["Parallel call workers"]
-    Q --> C1["Call 1"]
-    Q --> C2["Call 2"]
-    Q --> C3["Call N"]
-    C1 --> V["Sarvam voice loop<br/>Saarika STT, Sarvam-M, Bulbul TTS"]
-    C2 --> V
-    C3 --> V
-    V -->|"live quotes"| QB[("Quote board")]
-    QB -->|"competitive leverage"| V
-    V --> DB[("Convex<br/>calls, quotes, bookings")]
-    ORC -->|"ranked deals"| U
-    U -->|"pick winner"| ORC
-    ORC -->|"confirm and book"| DB
+    U["You on Telegram<br/>text or voice note"] --> CV["Convex<br/>httpAction"]
+    CV --> STT1["Saaras v3<br/>batch STT"]
+    STT1 --> INT["sarvam-30b<br/>intent → objective slots"]
+    INT -->|"approve plan"| U
+    INT --> DISC["Vendor discovery<br/>OSM / Google Places"]
+    DISC --> GATE["Compliance gate<br/>DNC · hours · caps"]
+    GATE --> BR["Bridge<br/>FastAPI + Pipecat"]
+    BR --> TW["Twilio PSTN<br/>outbound +91"]
+    TW --> LOOP["Saaras v3 STT → sarvam-30b → Bulbul v3 TTS<br/>auto language detect, mid-call switch"]
+    LOOP --> CV2[("Convex<br/>turns · slots · quotes")]
+    CV2 -->|"prior real quotes"| BR
+    CV2 --> DASH["Live dashboard"]
+    CV2 --> U
 ```
 
-The result: you make zero calls, and the wall clock is roughly the length of a single call, not the sum of all of them.
-
-## Human in the loop
-
-Doot is neither fully autonomous nor something you babysit. It stops at three points only.
-
-| Point | When | What you do |
-| :--- | :--- | :--- |
-| A | Before dialing | Approve the plan: who it calls, what it asks, the target and walk-away price |
-| B | Mid call | A business asks something outside policy. Doot pauses that one call, sends you a yes or no, then resumes |
-| C | Closing | You pick the winner. Doot books it, or hands you the final personal step such as payment or ID |
+Calls run **sequentially**, not in parallel — that's what makes the leverage mechanic deterministic, since call N can only cite a quote call N−1 actually finished producing.
 
 ## Built on Sarvam AI
 
-Selected capability: **Voice Experience**. The product depends on holding a real, code-mixed, noisy phone call and negotiating on it.
+Selected capability: **Voice Experience**. The product lives or dies on whether Doot can hold a real, code-mixed, noisy phone call and get a straight answer out of it.
 
 | Component | Role |
 | :--- | :--- |
-| Saarika | Streaming speech to text for the business side. Handles accents, Hindi and English code switching, background noise, and corrections |
-| Bulbul | Doot's own voice. Firm when anchoring a price, warm when closing, deliberate on numbers |
-| Sarvam-M | The negotiation brain, slot filling, cross call leverage, ranking, and Telegram reasoning |
-| Saaras | Optional. Bridges your language and the business language when they differ |
+| **Saaras v3** | Streaming STT on the phone leg and batch STT for Telegram voice notes. 23 languages, code-mixed, automatic language detection. `mode="translate"` also covers the cross-language bridge. |
+| **Bulbul v3** | Doot's voice. Firm when anchoring, warm when closing, deliberate on numbers. Switches language mid-call when the callee does. |
+| **sarvam-30b** | The in-call brain — one short spoken turn at a time, under a hard latency budget. |
+| **sarvam-105b** | Offline structured extraction, summaries, and the deal comparison. Never in the live loop. |
+| **Mayura + transliterate** | English toggle and romanised captions on the dashboard transcript. |
+
+Eight distinct Sarvam surfaces in one call flow. See [BUILD-SPEC §7](docs/BUILD-SPEC.md).
+
+## Language handling
+
+Set `language="unknown"` on the STT socket and Saaras returns the detected language and a confidence score on every utterance. When the callee switches, Doot switches — gated on two consecutive confident finals so it doesn't flap.
+
+One asymmetry that matters: **STT covers 23 languages, TTS covers 11.** Doot can transcribe Maithili and cannot answer in it, so every switch is checked against the TTS set first.
 
 ## Tech stack
 
 | Layer | Choice |
 | :--- | :--- |
-| Interface | Telegram Bot API |
-| Orchestration and workers | Node or Python service with a bounded parallel call pool |
-| Voice | Sarvam Saarika, Bulbul, and Sarvam-M over streaming APIs |
-| Telephony | Twilio Media Streams for the phone line and real time audio. Samvaad by Sarvam is the managed upgrade path |
-| Data | Convex for durable state, functions, and the live quote board |
+| Interface | Telegram Bot API, served directly from a Convex `httpAction` — no separate Node process |
+| Voice pipeline | Pipecat, with Sarvam's official Twilio integration |
+| Telephony | Twilio outbound, US caller ID → +91, `<Connect><Stream>` media streams |
+| Data | Convex — schema, reactive queries, scheduler, file storage |
+| Dashboard | Vite + React + shadcn/ui, live transcripts over Convex reactivity |
 
 ## Documentation
 
-| Document | Contents |
-| :--- | :--- |
-| [docs/PRD.md](docs/PRD.md) | Problem, user, job to be done, features, Sarvam usage |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, per call voice loop, concurrency, latency budget |
-| [docs/BARGAINING.md](docs/BARGAINING.md) | The negotiation engine and parallel competitive leverage |
-| [docs/DATA_MODEL.md](docs/DATA_MODEL.md) | Data model, state machine, traceability |
-| [docs/DEMO.md](docs/DEMO.md) | The three minute demo script |
-| [docs/RUBRIC.md](docs/RUBRIC.md) | Mapping to the Sarvam and GrowthX judging rubric |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Build order, milestones, and what to cut |
+**[docs/BUILD-SPEC.md](docs/BUILD-SPEC.md) is the single source of truth** — architecture, Convex schema, the Sarvam endpoint table, negotiation prompt pack, compliance constants, five-lane workstream contracts with frozen interfaces, hour-by-hour plan, demo script, risk register, and the open questions with the experiment that closes each.
 
 ## Quickstart
 
@@ -121,20 +109,22 @@ Selected capability: **Voice Experience**. The product depends on holding a real
 git clone https://github.com/Aniketvish0/bargain-voice-agent.git
 cd bargain-voice-agent
 npm install
-cp .env.example .env            # Sarvam, Telegram, and telephony keys
-npx convex dev                  # sync the Convex backend
+cp .env.example .env            # Sarvam, Telegram, Twilio, Convex
+npx convex dev                  # sync the backend
 ```
 
-The Convex backend is already provisioned. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the service layout, and [docs/ROADMAP.md](docs/ROADMAP.md) for the recommended build order. The critical path to verify first is telephony.
+Then read [BUILD-SPEC §3](docs/BUILD-SPEC.md) before anything else — the telephony account has gates that take longer than the code does.
 
 ## Trust and consent
 
-Trust is designed in, not added later.
+Designed in, not bolted on.
 
-- Every call opens by disclosing that it is an AI assistant calling on behalf of a named person.
-- Do not call requests are honored and logged.
-- Every call keeps a signed recording and transcript, so any quoted price is provable rather than claimed.
-- Payment and identity steps are never automated. They always route back to you.
+- Every call opens by disclosing that it is an AI assistant calling on behalf of a named person, and that the call is recorded. The wording used is logged per call.
+- A human approves the plan before anything dials.
+- Do-not-call requests are honoured immediately, permanently, and across all users.
+- Doot never states a competing price it did not actually obtain on an earlier call.
+- Doot never books, pays, or asks for an OTP, UPI ID, or any identity document.
+- Call caps stay under TRAI's bulk-communication thresholds, and calls only go out between 10:00 and 20:00 IST.
 
 ## License
 
