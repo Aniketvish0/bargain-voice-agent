@@ -300,15 +300,22 @@ function Welcome({
         <div className="glyph">
           <Phone />
         </div>
-        <h2>Connect your console</h2>
+        {/*
+          This used to say "send /start to @orydl_bot and open the link it DMs
+          you" — a dead end that made a chat bot a prerequisite for opening a
+          dashboard. The console now provisions its own session on first visit,
+          so reaching this state means Convex could not be contacted at all.
+          Say that, rather than sending someone to Telegram to fix a network
+          problem.
+        */}
+        <h2>Can’t reach the backend</h2>
         <p>
-          Send <b>/start</b> to{" "}
-          <a href="https://t.me/orydl_bot" style={{ color: "var(--peri)" }}>
-            @orydl_bot
-          </a>{" "}
-          and open the link it DMs you.
+          The console could not start a session. Check that{" "}
+          <b>NEXT_PUBLIC_CONVEX_URL</b> is set and the deployment is up.
         </p>
-        <div className="mono">https://…/?t=YOUR_TOKEN</div>
+        <div className="mono">
+          {process.env.NEXT_PUBLIC_CONVEX_URL ?? "NEXT_PUBLIC_CONVEX_URL is unset"}
+        </div>
       </div>
     );
   }

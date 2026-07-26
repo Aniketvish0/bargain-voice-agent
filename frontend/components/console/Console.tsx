@@ -27,6 +27,8 @@ import { Insights, Panel, Plus } from "./Icons";
 export function Console() {
   const [token, setToken] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [needsSession, setNeedsSession] = useState(false);
+  const signIn = useMutation(api.console.signIn);
   const [missionId, setMissionId] = useState<Id<"missions"> | null>(null);
   const [callId, setCallId] = useState<Id<"calls"> | null>(null);
   const [scrollToSeq, setScrollToSeq] = useState<number | null>(null);
@@ -48,16 +50,59 @@ export function Console() {
       window.history.replaceState({}, "", window.location.pathname);
       setToken(fromUrl);
     } else {
+      let stored: string | null = null;
       try {
-        setToken(localStorage.getItem("orydl_token"));
+        stored = localStorage.getItem("orydl_token");
       } catch {
-        setToken(null);
+        stored = null;
+      }
+      if (stored) {
+        setToken(stored);
+      } else {
+        // NO TOKEN, NO TELEGRAM, NO SIGN-IN SCREEN.
+        //
+        // The console used to be unreachable without messaging @orydl_bot and
+        // opening the link it DM'd back. That made a chat bot a hard
+        // dependency of the dashboard, which is backwards: they are peer
+        // front-ends over one store, and either should stand alone.
+        //
+        // First visit now provisions a console-scoped identity silently. The
+        // `?t=` path still works for arriving from a Telegram DM, and the
+        // sign-in panel is still there for deliberately joining an existing
+        // Telegram history — but neither is required to get in.
+        setNeedsSession(true);
       }
     }
     setShowRail(window.innerWidth > 700);
     setShowSide(window.innerWidth > 900);
     setReady(true);
   }, []);
+
+  // Provision on first visit. Separate effect because it needs the Convex
+  // client, which is not available during the static export's first render.
+  useEffect(() => {
+    if (!needsSession || token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await signIn({});
+        if (cancelled) return;
+        try {
+          localStorage.setItem("orydl_token", res.token);
+        } catch {
+          /* private mode — the session still works for this tab */
+        }
+        setToken(res.token);
+      } catch (e) {
+        console.error("could not provision a console session", e);
+      } finally {
+        if (!cancelled) setNeedsSession(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [needsSession, token, signIn]);
 
   const missions = useQuery(api.missions.list, token ? { token } : "skip");
   const full = useQuery(api.missions.get, token && missionId ? { token, missionId } : "skip");
@@ -186,8 +231,12 @@ export function Console() {
     [token, missionId, busy, startCalls, logChat],
   );
 
-  if (!ready) return <div className="app-boot" />;
+  // Booting, or provisioning the first-visit session. Both are momentary.
+  if (!ready || needsSession) return <div className="app-boot" />;
 
+  // Only reachable if provisioning actually failed (Convex unreachable, or
+  // NEXT_PUBLIC_CONVEX_URL wrong). Then the manual door is genuinely useful,
+  // rather than being the only way in.
   if (!token) {
     return (
       <div className="app no-rail no-side">
