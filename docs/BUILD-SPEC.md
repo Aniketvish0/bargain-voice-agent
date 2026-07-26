@@ -541,7 +541,7 @@ tts = SarvamTTSService(
     sample_rate=8000,                  # bulbul:v3 default is 24000 — MUST override
     settings=SarvamTTSService.Settings(
         model="bulbul:v3",
-        voice="anushka",
+        voice="simran",
         # ⚠️ SEE OPEN QUESTION Q1 — field may be `language` or `target_language_code`
         language=Language.HI,
         pace=1.0,
@@ -587,10 +587,30 @@ the part that kills you — **reasoning tokens count toward completion tokens**.
 *"a small max_tokens can be consumed entirely by reasoning."*
 
 Your in-call turns cap `max_tokens` at 60–100 to keep spoken replies short. **The model will happily
-burn that entire budget thinking and emit nothing at all.** You will see a silent phone call and an
-LLM that "works fine" in curl with a bigger token cap.
+burn that entire budget thinking and emit nothing at all.**
 
-> Send `"reasoning_effort": null` explicitly on **every in-call completion**. Not "low". `null`.
+**Reproduced live against our own key today.** Identical request, `max_tokens: 60`, only difference
+is the one field:
+
+```jsonc
+// ❌ defaults — what anyone would write
+{"model":"sarvam-30b","max_tokens":60,"temperature":0.4, ...}
+→ content        : null                     ← THE PHONE IS SILENT
+  reasoning_content: "1. **Analyze the User's Request:** ..."
+  usage          : {completion_tokens: 60}  ← all 60 spent thinking
+  finish_reason  : "length"
+
+// ✅ with the fix
+{"model":"sarvam-30b","max_tokens":60,"temperature":0.4,"reasoning_effort":null, ...}
+→ content        : "3500 rupaye mein kaam chal jayega."
+  usage          : {completion_tokens: 14}
+  finish_reason  : "stop"                   ← ~500ms round trip
+```
+
+> Send `"reasoning_effort": null` explicitly on **every in-call completion**. Not `"low"`. `null`.
+
+This is the highest-value single line in the build. Without it there is no demo, and the failure mode
+is silence rather than an error — you would spend an hour debugging the audio path.
 
 *(Docs conflict on the default — the chat-completions parameter reference says `medium`, the model
 pages say `low`. It doesn't matter: it's on either way.)*
@@ -634,7 +654,7 @@ debugging a 401 you'll never see.
 | ③ | **Streaming TTS** (phone leg) | `wss://api.sarvam.ai/text-to-speech/ws?model=bulbul:v3` | `target_language_code`, `speaker`, `speech_sample_rate=8000`, `pace=1.0`, `min_buffer_size=30`, `enable_preprocessing=true` |
 | ④ | **Chat — live loop** | `POST https://api.sarvam.ai/v1/chat/completions` | `model=sarvam-30b`, `max_tokens=100`, `temperature=0.4`, **`reasoning_effort=null`** ⚠️ |
 | ⑤ | **Chat — extraction** | same | `model=sarvam-105b`, `response_format={"type":"json_object"}`, `max_tokens=4096`, **`reasoning_effort=null`** ⚠️ |
-| ⑥ | **REST TTS** (Telegram voice note, voice preview) | `POST https://api.sarvam.ai/text-to-speech` | `{text, target_language_code, speaker, model:"bulbul:v3", sample_rate:22050}` → `audios[0]` base64 |
+| ⑥ | **REST TTS** (Telegram voice note, voice preview) | `POST https://api.sarvam.ai/text-to-speech` | `{text, target_language_code, speaker, model:"bulbul:v3"}` → `audios[0]` base64. ⚠️ Rate param is **`speech_sample_rate`**, NOT `sample_rate`. Default output is **RIFF/WAV @22050**. Add `output_audio_codec:"opus"` + `speech_sample_rate:24000` for Ogg-Opus. |
 | ⑦ | **Translate (Mayura)** + **Transliterate** | `POST /translate`, `POST /transliterate` | Hindi transcript → English toggle; romanised line under Devanagari |
 | ⑧ | **Batch diarized analytics** *(stretch)* | Batch STT job | `saaras:v3`, `mode=translate`, `with_diarization=True` → `SPEAKER_00/01` + `start_time_seconds` → talk-time metrics per speaker |
 
@@ -642,17 +662,26 @@ debugging a 401 you'll never see.
 The TTS config **is** re-sendable mid-connection and the buffer auto-flushes — that is what makes
 mid-call voice switching possible.
 
-### Speakers — no list endpoint exists, hardcode
+### Speakers — verified live against the API today
 
-bulbul:v3, lowercase and case-sensitive, default `shubh`:
+No list endpoint exists, but a bad speaker name returns the full valid set in the 400. **These are
+the 38 real `bulbul:v3` speakers**, lowercase and case-sensitive:
 
 ```
-anushka  shubh  aditya  ritu  priya  neha  rahul  pooja
-simran   kavya  ishita  shreya  anand  tanya  suhani  rupali
+aditya   ritu     ashutosh  priya    neha     rahul    pooja    rohan
+simran   kavya    amit      dev      ishita   shreya   ratan    varun
+manan    sumit    roopa     kabir    aayan    shubh    advait   anand
+tanya    tarun    sunny     mani     gokul    vijay    shruti   suhani
+mohit    kavitha  rehan     soham    rupali   niharika
 ```
 
-23 male + 14 female voices exist in total. **Ship 6–8 curated in the picker, not 39.**
-⚠️ **v2 and v3 speaker sets are not interchangeable.**
+> ⚠️ **`anushka` is NOT a v3 speaker** — it is v2, and an earlier draft of this document used it as
+> the default Hindi voice. It returns
+> `400 Speaker 'anushka' is not compatible with model bulbul:v3`.
+> **This is the "v2 and v3 speaker sets are not interchangeable" trap, and it is easy to hit.**
+> Verified default Hindi voice for v3: **`simran`**.
+
+**Ship 6–8 curated in the picker, not 38.**
 
 ### Rate limits and money — Starter tier
 
@@ -728,7 +757,7 @@ Also pass the `prompt` param to bias the recogniser toward the words you cannot 
 TTS_11 = {"hi-IN","en-IN","bn-IN","gu-IN","kn-IN","ml-IN",
           "mr-IN","od-IN","pa-IN","ta-IN","te-IN"}
 
-VOICE = {"hi-IN":"anushka", "ta-IN":"kavya",  "te-IN":"ishita", "kn-IN":"priya",
+VOICE = {"hi-IN":"simran",  "ta-IN":"kavya",  "te-IN":"ishita", "kn-IN":"priya",
          "mr-IN":"neha",    "bn-IN":"shreya", "ml-IN":"rupali", "gu-IN":"pooja",
          "pa-IN":"tanya",   "od-IN":"suhani", "en-IN":"anand"}
 
@@ -1326,21 +1355,36 @@ if (rendered === lastRendered) return;
 
 ### Voice-note output — the one real format mismatch
 
-`sendVoice` requires **OGG encoded with OPUS**. `sendAudio` requires **MP3 or M4A**. Bulbul REST
-returns **WAV** base64. **Convex cannot run ffmpeg.**
+### ✅ RESOLVED — verified live against the API today. No ffmpeg anywhere.
 
-**But Bulbul may be able to emit Opus directly** — `output_audio_codec: "opus"` exists and is
-undocumented as to container. Ogg-Opus → `sendVoice` works; WebM or raw → `sendVoice` 400s.
+`sendVoice` requires **OGG/Opus**. Bulbul's default output is **RIFF/WAV @22050**, which would not
+work. **But Bulbul emits a real Ogg-Opus container directly:**
 
-> **Run this 2-minute probe before 11:00 and hardcode the winning branch:**
-> request `output_audio_codec: "opus"` from Bulbul REST, write the bytes to a file, check the magic
-> bytes (`OggS` = Ogg container), and try `sendVoice`.
+```jsonc
+POST https://api.sarvam.ai/text-to-speech
+{
+  "text": "...", "target_language_code": "hi-IN",
+  "speaker": "simran", "model": "bulbul:v3",
+  "output_audio_codec": "opus",
+  "speech_sample_rate": 24000        // ⚠️ NOT "sample_rate" — see the two traps below
+}
+```
 
-**Decision tree:** Ogg-Opus → `sendVoice`, done. Anything else → add a 15-line `POST /tts-ogg` to the
-bridge (Python, which *can* run ffmpeg). **Bridge not up → `sendDocument`**, which accepts any format
-and always works.
+Verified: magic bytes `OggS`, `OpusHead` present in the header. **`sendVoice` takes it as-is.**
+Bonus — 10 KB vs 135 KB for the same sentence as WAV.
 
-Do not spend more than 10 minutes on this; it is a Delight point, not a rubric line.
+**Two traps, both of which cost a 400:**
+
+1. **The param is `speech_sample_rate`, not `sample_rate`.** Passing `sample_rate` is silently
+   ignored, the request stays at the 22050 default, and you get
+   *"OPUS codec requires one of these sample rates: 8000, 12000, 16000, 24000, 48000 Hz.
+   Current sample rate: 22050 Hz."* — an error that names the right numbers while giving no hint
+   that your parameter name was wrong.
+2. **22050 (the default) is not a legal Opus rate.** You must pass one of
+   `8000 | 12000 | 16000 | 24000 | 48000`.
+
+**Consequences: delete the planned `POST /tts-ogg` bridge endpoint. It is not needed.** The Telegram
+lane now has zero dependency on the bridge, and `sendDocument` is no longer a fallback you need.
 
 ### UX and commands
 
@@ -2067,6 +2111,10 @@ venue networks sometimes block one provider and not the other.
 
 ### Q1 · Do the Pipecat Sarvam service signatures match the docs? **Run this at minute 16.**
 
+> **Partially resolved.** The Sarvam REST/HTTP layer is now verified live end to end: chat, TTS
+> (WAV + Ogg-Opus), and STT (WAV + OGG) all work with our key. What remains unverified is purely
+> the *Pipecat wrapper's* field names — run the probe below before Lane A writes a line.
+
 Sarvam's official guide writes `SarvamTTSService.Settings(target_language_code="hi-IN")`, while
 Pipecat's own API reference lists the field as `language`. The TTS doc gives the import path
 `pipecat.services.sarvam` while the STT doc gives `pipecat.services.sarvam.stt`. `pipecat-ai` 1.6.0
@@ -2129,6 +2177,11 @@ violation is the one thing that could kill your API key mid-demo.**
 *3-minute experiment:* open the ToS from the logged-in Sarvam dashboard in a browser and skim for
 outbound-calling and voice-cloning clauses before 12:00. We use stock Bulbul voices only and never
 clone an identifiable person, which already covers the likely clause.
+
+### ~~Q7a~~ · ✅ RESOLVED — Bulbul Ogg-Opus for Telegram `sendVoice`
+
+Verified live: `output_audio_codec:"opus"` + `speech_sample_rate:24000` returns a genuine
+`OggS`/`OpusHead` container. `sendVoice` works directly, no ffmpeg, no bridge endpoint. See §12.
 
 ### Q7 · Google Places free-tier shape in 2026.
 
