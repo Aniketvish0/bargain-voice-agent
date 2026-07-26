@@ -1,28 +1,30 @@
-import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useCallback, useEffect, useState } from "react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { MissionRail } from "./components/MissionRail";
 import { Transcript } from "./components/Transcript";
 import { Comparison } from "./components/Comparison";
 import { ThemeToggle } from "./components/ThemeToggle";
-import { Insights, Panel, Phone } from "./components/Icons";
+import { Composer } from "./components/Composer";
+import { Insights, Panel, Plus } from "./components/Icons";
+import { useThread } from "./lib/thread";
 
 /**
  * orydl console.
  *
- * Auth is a token the Telegram bot DMs you (?t=...), stashed in localStorage —
- * BUILD-SPEC Contract 5, including the honest note about tokens appearing in
- * function args and logs. Locally, VITE_DEV_TOKEN skips that handshake so the
- * console opens straight up.
+ * One control line drives everything: describe a goal and it discovers real
+ * businesses; then tell it who to call. Nothing dials without that second
+ * instruction — Checkpoint A, BUILD-SPEC §15.
+ *
+ * Auth is a token the Telegram bot DMs you (?t=...), stashed in localStorage.
+ * Locally, VITE_DEV_TOKEN skips that handshake.
  */
 export default function App() {
   const [token, setToken] = useState<string | null>(null);
   const [missionId, setMissionId] = useState<Id<"missions"> | null>(null);
   const [callId, setCallId] = useState<Id<"calls"> | null>(null);
   const [scrollToSeq, setScrollToSeq] = useState<number | null>(null);
-  // Start collapsed on narrow windows so neither panel opens as an overlay
-  // over the transcript on first paint.
   const [showRail, setShowRail] = useState(() => window.innerWidth > 700);
   const [showSide, setShowSide] = useState(() => window.innerWidth > 900);
   const [busy, setBusy] = useState(false);
@@ -36,9 +38,7 @@ export default function App() {
       return;
     }
     setToken(
-      localStorage.getItem("orydl_token") ??
-        import.meta.env.VITE_DEV_TOKEN ??
-        null,
+      localStorage.getItem("orydl_token") ?? import.meta.env.VITE_DEV_TOKEN ?? null,
     );
   }, []);
 
@@ -51,16 +51,16 @@ export default function App() {
     api.missions.comparison,
     token && missionId ? { token, missionId } : "skip",
   );
+  const roster = useQuery(
+    api.webconsole.roster,
+    token && missionId ? { token, missionId } : "skip",
+  );
   const me = useQuery(api.users.me, token ? { token } : "skip");
 
-  const approve = useMutation(api.missions.approve);
-  const cancel = useMutation(api.missions.cancel);
+  const command = useAction(api.webconsole.command);
+  const startCalls = useMutation(api.webconsole.startCalls);
 
-  // Auto-select the newest mission so a fresh Telegram request appears without
-  // a click during the demo.
-  useEffect(() => {
-    if (!missionId && missions?.length) setMissionId(missions[0]._id);
-  }, [missions, missionId]);
+  const { messages, push, adopt } = useThread(missionId);
 
   // Follow the action: when a mission is selected, jump to whichever call is
   // live. On stage you never want to be hunting for the right tab.
@@ -71,8 +71,7 @@ export default function App() {
     );
     const target = live ?? detail.rows[0];
     setCallId((prev) => {
-      if (prev && detail.rows.some((r: any) => r.callId === prev) && !live)
-        return prev;
+      if (prev && detail.rows.some((r: any) => r.callId === prev) && !live) return prev;
       return target.callId;
     });
   }, [detail]);
@@ -83,21 +82,75 @@ export default function App() {
     ["talking", "dialing", "ringing"].includes(r.status),
   ).length;
 
+  const send = useCallback(
+    async (text: string) => {
+      if (!token || busy) return;
+      push("user", text);
+      setBusy(true);
+      try {
+        const res = await command({
+          token,
+          text,
+          missionId: missionId ?? undefined,
+        });
+        push("agent", res.reply);
+        if (res.missionId && res.missionId !== missionId) {
+          adopt(res.missionId);
+          setMissionId(res.missionId as Id<"missions">);
+          setCallId(null);
+        }
+      } catch (err: any) {
+        push("agent", `That failed: ${err?.message ?? String(err)}`);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [token, busy, missionId, command, push, adopt],
+  );
+
+  const callPicked = useCallback(
+    async (vendorIds: Id<"vendors">[]) => {
+      if (!token || !missionId || busy) return;
+      setBusy(true);
+      try {
+        const res = await startCalls({ token, missionId, vendorIds });
+        push(
+          "agent",
+          res.queued > 0
+            ? `Dialling ${res.queued} ${res.queued === 1 ? "number" : "numbers"}, one at a time.${
+                res.capped ? ` Capped at ${res.cap} businesses per request.` : ""
+              }`
+            : "Nothing was queued — those numbers are already called or gate-blocked.",
+        );
+      } catch (err: any) {
+        push("agent", `Couldn't start calls: ${err?.message ?? String(err)}`);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [token, missionId, busy, startCalls, push],
+  );
+
   const cls = ["app", showRail ? "" : "no-rail", showSide ? "" : "no-side"]
     .filter(Boolean)
     .join(" ");
 
+  const composerHint = missionId
+    ? "Enter to send · Shift+Enter for a new line · nothing dials until you say so"
+    : "Describe what you want. orydl finds the businesses first — you choose who it calls.";
+
+  const suggestions = missionId
+    ? roster?.vendors?.some((v: any) => v.gatePassed && !v.queued)
+      ? ["call the top 3", "status", "stop"]
+      : ["status"]
+    : [
+        "Goa mein 14 tarikh se do raat AC hotel, 4000 se kam",
+        "Restaurant in HSR Layout for 4 tonight under ₹2000",
+      ];
+
   return (
     <>
       <div className="grain" />
-      <div
-        className="blob peri"
-        style={{ width: 520, height: 520, top: -180, left: 180 }}
-      />
-      <div
-        className="blob sig"
-        style={{ width: 440, height: 440, bottom: -200, right: 120 }}
-      />
 
       <div className={cls}>
         {/* ------------------------------ left rail ------------------------------ */}
@@ -108,6 +161,16 @@ export default function App() {
               <span className="deva">the calling envoy</span>
             </div>
           </div>
+
+          <button
+            className="newmission"
+            onClick={() => {
+              setMissionId(null);
+              setCallId(null);
+            }}
+          >
+            <Plus /> New mission
+          </button>
 
           <MissionRail
             missions={missions}
@@ -125,9 +188,13 @@ export default function App() {
             <div className="who">
               <div className="nm">{me?.displayName ?? "orydl user"}</div>
               <div className="sub">
-                {me?.totalSavedInr
-                  ? <>saved <b>₹{me.totalSavedInr.toLocaleString("en-IN")}</b> so far</>
-                  : "connected via Telegram"}
+                {me?.totalSavedInr ? (
+                  <>
+                    saved <b>₹{me.totalSavedInr.toLocaleString("en-IN")}</b> so far
+                  </>
+                ) : (
+                  "connected via Telegram"
+                )}
               </div>
             </div>
             <ThemeToggle />
@@ -147,11 +214,7 @@ export default function App() {
             </button>
 
             <div className="t-title">
-              <h1>
-                {mission
-                  ? mission.rawRequest || mission.category
-                  : "orydl console"}
-              </h1>
+              <h1>{mission ? mission.rawRequest || mission.category : "New mission"}</h1>
               <div className="t-sub">
                 {mission
                   ? [
@@ -161,7 +224,7 @@ export default function App() {
                     ]
                       .filter(Boolean)
                       .join(" · ")
-                  : "live calls, in their language"}
+                  : "describe a goal · orydl finds the numbers"}
               </div>
             </div>
 
@@ -192,62 +255,39 @@ export default function App() {
                   <span className={`dot ${r.status}`} />
                   <span className="nm">{r.vendorName}</span>
                   {r.finalQuoteInr ? (
-                    <span className="pr">
-                      ₹{r.finalQuoteInr.toLocaleString("en-IN")}
-                    </span>
+                    <span className="pr">₹{r.finalQuoteInr.toLocaleString("en-IN")}</span>
                   ) : null}
                 </button>
               ))}
             </div>
           )}
 
-          {missionId ? (
-            <Transcript
-              token={token!}
-              mission={full?.mission}
-              vendors={full?.vendors ?? []}
-              rows={rows}
-              callId={callId}
-              scrollToSeq={scrollToSeq}
-            />
-          ) : (
-            <Welcome loading={missions === undefined} hasToken={!!token} />
-          )}
+          <Transcript
+            token={token!}
+            mission={full?.mission}
+            roster={roster}
+            rows={rows}
+            callId={callId}
+            scrollToSeq={scrollToSeq}
+            messages={messages}
+            busy={busy}
+            hasToken={!!token}
+            loadingMissions={missions === undefined}
+            onCall={callPicked}
+            onSuggest={send}
+          />
 
-          <div className="composer">
-            <div className="composer-in">
-              <ActionBar
-                mission={mission}
-                liveCount={liveCount}
-                busy={busy}
-                onApprove={async () => {
-                  if (!token || !missionId) return;
-                  setBusy(true);
-                  try {
-                    await approve({ token, missionId });
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-                onCancel={async () => {
-                  if (!token || !missionId) return;
-                  setBusy(true);
-                  try {
-                    await cancel({ token, missionId });
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              />
-              <div className="composer-note">
-                New goals start in Telegram —{" "}
-                <a href="https://t.me/orydl_bot" target="_blank" rel="noreferrer">
-                  @orydl_bot
-                </a>
-                . Type it or hold the mic.
-              </div>
-            </div>
-          </div>
+          <Composer
+            placeholder={
+              missionId
+                ? "Tell orydl what to do — “call the top 3”, “call Empire”, “stop”…"
+                : "What do you need? e.g. “AC hotel in South Goa for two nights under ₹4,000”"
+            }
+            hint={composerHint}
+            busy={busy}
+            suggestions={suggestions}
+            onSubmit={send}
+          />
         </main>
 
         {/* ----------------------------- right panel ----------------------------- */}
@@ -289,199 +329,14 @@ function StatusChip({ status, live }: { status: string; live: number }) {
     );
   }
   const map: Record<string, [string, string]> = {
-    awaiting_approval: ["amber", "needs approval"],
+    awaiting_approval: ["amber", "pick who to call"],
     pending: ["", "pending"],
-    discovering: ["peri", "finding shops"],
+    discovering: ["peri", "finding numbers"],
     calling: ["live", "calling"],
     done: ["ok", "done"],
     failed: ["", "failed"],
-    cancelled: ["", "cancelled"],
+    cancelled: ["", "stopped"],
   };
   const [tone, label] = map[status] ?? ["", status];
   return <span className={`chip ${tone}`}>{label}</span>;
-}
-
-/**
- * The bottom bar is where a chat app puts its composer. New goals arrive from
- * Telegram, so this slot carries the one decision the dashboard genuinely
- * owns: Checkpoint A — nothing dials until you tap.
- */
-function ActionBar({
-  mission,
-  liveCount,
-  busy,
-  onApprove,
-  onCancel,
-}: {
-  mission: any;
-  liveCount: number;
-  busy: boolean;
-  onApprove: () => void;
-  onCancel: () => void;
-}) {
-  if (!mission) {
-    return (
-      <div className="actionbar">
-        <div className="txt">
-          <div className="hd">Nothing selected</div>
-          <div className="sb">
-            Pick a mission on the left to watch its calls unfold.
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (mission.status === "awaiting_approval") {
-    return (
-      <div className="actionbar pending">
-        <div className="txt">
-          <div className="hd">Checkpoint A — nothing has dialled yet</div>
-          <div className="sb">
-            Approve and orydl calls the shortlist one at a time, carrying each
-            quote into the next call.
-          </div>
-        </div>
-        <div className="btns">
-          <button className="btn ghost" onClick={onCancel} disabled={busy}>
-            Discard
-          </button>
-          <button className="btn solid" onClick={onApprove} disabled={busy}>
-            {busy ? "…" : "Approve & call"}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (liveCount > 0 || mission.status === "calling") {
-    return (
-      <div className="actionbar">
-        <div className="txt">
-          <div className="hd">
-            {liveCount > 0
-              ? `${liveCount} ${liveCount === 1 ? "call" : "calls"} in flight`
-              : "Working the shortlist"}
-          </div>
-          <div className="sb">
-            Every quote gets carried into the next call as leverage.
-          </div>
-        </div>
-        <div className="btns">
-          <button className="btn ghost" onClick={onCancel} disabled={busy}>
-            Stop
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (mission.status === "discovering") {
-    return (
-      <div className="actionbar">
-        <div className="txt">
-          <div className="hd">Finding shops in {mission.locality || "the area"}</div>
-          <div className="sb">
-            Each number runs the compliance gate before it can be dialled.
-          </div>
-        </div>
-        <div className="btns">
-          <button className="btn ghost" onClick={onCancel} disabled={busy}>
-            Stop
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const done: Record<string, string> = {
-    done: "Mission complete",
-    failed: "Mission failed",
-    cancelled: "Mission cancelled",
-    pending: "Queued",
-  };
-  return (
-    <div className="actionbar">
-      <div className="txt">
-        <div className="hd">{done[mission.status] ?? mission.status}</div>
-        <div className="sb">
-          {mission.savedInr
-            ? `Saved ₹${mission.savedInr.toLocaleString("en-IN")} against the best opening quote.`
-            : `${mission.callCount} ${mission.callCount === 1 ? "call" : "calls"} placed. Transcripts and evidence stay here.`}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Welcome({
-  loading,
-  hasToken,
-}: {
-  loading: boolean;
-  hasToken: boolean;
-}) {
-  if (!hasToken) {
-    return (
-      <div className="empty">
-        <div className="glyph">
-          <Phone />
-        </div>
-        <h2>Connect your console</h2>
-        <p>
-          Send <b>/start</b> to{" "}
-          <a href="https://t.me/orydl_bot" style={{ color: "var(--peri)" }}>
-            @orydl_bot
-          </a>{" "}
-          and open the link it DMs you. That link carries the session this
-          dashboard reads.
-        </p>
-        <div className="mono">https://…/?t=YOUR_TOKEN</div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="empty">
-      <div className="glyph">
-        <Phone />
-      </div>
-      <h2>{loading ? "Loading your missions…" : "Give it a goal"}</h2>
-      <p>
-        You give orydl one goal. It calls the shops, haggles each one down in
-        their own language, and brings back the best deal — while you do
-        something else.
-      </p>
-      {!loading && (
-        <div className="prompts">
-          <div className="prompt-card">
-            <div className="k">negotiate</div>
-            <div className="q">
-              “Goa mein 14 tarikh se do raat ke liye AC hotel chahiye, chaar
-              hazaar se kam per night”
-            </div>
-          </div>
-          <div className="prompt-card">
-            <div className="k">quote</div>
-            <div className="q">
-              “Find me the cheapest 1.5 ton split AC installation in Indiranagar”
-            </div>
-          </div>
-          <div className="prompt-card">
-            <div className="k">availability</div>
-            <div className="q">
-              “Which clinics near Koramangala can do a blood test tomorrow
-              morning?”
-            </div>
-          </div>
-          <div className="prompt-card">
-            <div className="k">negotiate</div>
-            <div className="q">
-              “Jaipur mein hotel chahiye teen hazaar se kam”
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
 }

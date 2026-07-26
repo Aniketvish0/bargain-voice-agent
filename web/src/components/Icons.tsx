@@ -60,6 +60,12 @@ export const Text = () => (
   </svg>
 );
 
+export const Plus = () => (
+  <svg viewBox="0 0 24 24" {...s}>
+    <path d="M12 5v14M5 12h14" />
+  </svg>
+);
+
 export const Shield = () => (
   <svg viewBox="0 0 24 24" {...s}>
     <path d="M12 3l7 3v5.5c0 4.4-3 8.1-7 9.5-4-1.4-7-5.1-7-9.5V6Z" />

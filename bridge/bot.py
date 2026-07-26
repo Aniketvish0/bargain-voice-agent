@@ -165,7 +165,7 @@ class TranscriptTap(FrameProcessor):
             # ── Answer them. This is the conversation loop.
             task = self._task_ref.get("task")
             if task:
-                await self._conversation.on_user_text(text, task)
+                await self._conversation.on_user_text(text, task, lang_code)
 
         await self.push_frame(frame, direction)
 
@@ -198,11 +198,14 @@ class TranscriptTap(FrameProcessor):
         voice = VOICE_BY_LANG[new]
         logger.info(f"[{st.call_id}] language switch {old} -> {new} (voice {voice})")
 
+        # Change the LANGUAGE, keep the VOICE. Swapping speaker mid-call makes
+        # it sound like a different person picked up our end — the callee
+        # adapting to us is exactly what we are trying to avoid.
         task = self._task_ref.get("task")
         if task:
             await task.queue_frame(
                 TTSUpdateSettingsFrame(
-                    settings={"language": LANG_ENUM.get(new, Language.HI_IN), "voice": voice}
+                    settings={"language": LANG_ENUM.get(new, Language.HI_IN)}
                 )
             )
         self._convex.lang_switch(st.call_id, old, new, 0.9)
@@ -323,6 +326,7 @@ def build_pipeline(
         convex=convex,
         system_prompt=system_prompt,
         api_key=api_key,
+        brief=brief,   # the driver owns the objective slots and the goal machine
     )
 
     task_ref: dict[str, Any] = {}
