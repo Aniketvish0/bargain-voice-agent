@@ -182,6 +182,12 @@ export const forMission = internalQuery({
       .collect(),
 });
 
+/** Who are we about to call? Used by `calls.dial` to name the callee. */
+export const getInternal = internalQuery({
+  args: { vendorId: v.id("vendors") },
+  handler: async (ctx, args) => await ctx.db.get(args.vendorId),
+});
+
 /** Bulk-load the OSM seed. Idempotent on phone number. */
 export const upsertLeads = internalMutation({
   args: {

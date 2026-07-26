@@ -186,8 +186,29 @@ export const dialNext = internalAction({
 export const afterCall = internalAction({
   args: { missionId: v.id("missions"), callId: v.id("calls") },
   handler: async (ctx, args) => {
+    /**
+     * ⚠️ WAIT FOR THE OUTCOME BEFORE ADVANCING. This is not politeness.
+     *
+     * Two things happen when a call ends, and they race:
+     *   - Twilio POSTs "completed" to /ingest/status, which lands here almost
+     *     immediately, and
+     *   - the bridge runs `extract_outcome` in its `finally` block, which is a
+     *     105B round trip taking several seconds, and only THEN posts the
+     *     quote and the `memory` delta to /ingest/outcome.
+     *
+     * Twilio always wins. So without this wait we dial vendor N+1 with
+     * `mission.memory` still empty and `priorQuotes` still empty — which is
+     * precisely the failure §1.5.1 exists to prevent. The mechanic silently
+     * degrades to "three unrelated phone calls" while every table still looks
+     * populated afterwards, because the memory lands a few seconds later.
+     *
+     * Bounded, because a dead bridge must not strand the mission: after
+     * OUTCOME_GRACE_MS we fall through to the Convex-side extraction below.
+     */
+    await waitForOutcome(ctx, args.callId);
+
     // The bridge normally posts /ingest/outcome itself; this is the safety net
-    // for calls that died before it could.
+    // for calls that died before it could. It no-ops if the bridge won.
     await ctx.runAction(internal.summarise.extractCall, { callId: args.callId }).catch(
       (e) => console.warn("extractCall failed", e),
     );
@@ -214,6 +235,32 @@ export const afterCall = internalAction({
     });
   },
 });
+
+/** Generous enough for a 105B extraction, short enough not to stall a demo. */
+const OUTCOME_GRACE_MS = 12_000;
+const OUTCOME_POLL_MS = 750;
+
+/**
+ * Block until the bridge's post-call extraction has landed on this call, or
+ * the grace period expires. Returns true if an outcome arrived.
+ *
+ * "An outcome arrived" is read off the call row rather than a flag, because
+ * the bridge writes through `calls.applyOutcome` and adding a flag would mean
+ * touching the frozen schema. A row with slots or a quote has been extracted.
+ */
+async function waitForOutcome(ctx: any, callId: Id<"calls">): Promise<boolean> {
+  const deadline = Date.now() + OUTCOME_GRACE_MS;
+  while (Date.now() < deadline) {
+    const call = await ctx.runQuery(internal.calls.getInternal, { callId });
+    if (!call) return false;
+    if ((call.slots?.length ?? 0) > 0 || call.finalQuoteInr !== undefined) return true;
+    // A call nobody picked up will never produce an outcome. Don't burn 12s.
+    if (call.status === "no_answer" || call.status === "failed") return false;
+    await new Promise((r) => setTimeout(r, OUTCOME_POLL_MS));
+  }
+  console.warn(`outcome never arrived for ${callId} — dialling on without it`);
+  return false;
+}
 
 function renderRoster(vendors: Array<any>): string {
   const lines = ["<b>📇 Found these</b>", ""];

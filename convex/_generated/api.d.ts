@@ -9,6 +9,7 @@
  */
 
 import type * as calls from "../calls.js";
+import type * as console from "../console.js";
 import type * as crons from "../crons.js";
 import type * as direct from "../direct.js";
 import type * as fit from "../fit.js";
@@ -40,6 +41,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   calls: typeof calls;
+  console: typeof console;
   crons: typeof crons;
   direct: typeof direct;
   fit: typeof fit;

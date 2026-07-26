@@ -30,6 +30,12 @@ type Extracted = {
   contactName?: string | null;
   holdUntil?: string | null;
   closed?: boolean | null;
+  memory?: {
+    worked?: string[];
+    avoid?: string[];
+    objections?: string[];
+    suspicion?: boolean;
+  } | null;
 };
 
 const EXTRACT_SYSTEM = `You read a transcript of a phone call between an AI buying assistant
@@ -49,7 +55,13 @@ Return ONLY JSON:
   "terms": "<short summary of what's included, or null>",
   "contactName": "<person's name, or null>",
   "holdUntil": "<how long the price is held, verbatim, or null>",
-  "closed": <true if a concrete deal/answer was reached>
+  "closed": <true if a concrete deal/answer was reached>,
+  "memory": {
+    "worked": ["<what got them to engage or concede — max 2, short>"],
+    "avoid": ["<what made them resist, go quiet, or hang up — max 2, short>"],
+    "objections": ["<objections they raised, e.g. season rate — max 2>"],
+    "suspicion": <true if they questioned whether you were human>
+  }
 }
 
 RULES:
@@ -63,7 +75,10 @@ RULES:
 - Return integers in rupees. NEVER guess a price that was not spoken — null is correct.
 - If the vendor gave only one price, openingQuoteInr and finalQuoteInr are the same.
 - The agent reads the deal back near the end of the call. That read-back line is the
-  most reliable source — prefer it over anything earlier in the transcript.`;
+  most reliable source — prefer it over anything earlier in the transcript.
+- "memory" is coaching for the NEXT call in the same mission. Be specific and
+  behavioural ("volunteered a discount when two nights was mentioned"), never
+  generic ("be polite"). Under 12 words per line. Omit what you did not observe.`;
 
 export const extractCall = internalAction({
   args: { callId: v.id("calls") },
@@ -127,8 +142,35 @@ export const extractCall = internalAction({
       holdUntil: data.holdUntil ?? undefined,
       closed: typeof data.closed === "boolean" ? data.closed : undefined,
     });
+
+    /**
+     * Fold the memory delta in from THIS path too, not only from the bridge's
+     * /ingest/outcome.
+     *
+     * Mission memory used to have exactly one writer — the bridge — so a call
+     * where the bridge crashed, timed out, or lost its transcript produced a
+     * mission that silently stopped learning. This is the same safety net the
+     * rest of `extractCall` already is, extended to §1.5.1. `mergeMemory` is
+     * idempotent-ish (it dedupes and keeps the last 4), so double-writing when
+     * both paths run is harmless.
+     */
+    const mem = data.memory;
+    if (mem && typeof mem === "object") {
+      await ctx.runMutation(internal.missions.mergeMemory, {
+        missionId: call.missionId,
+        goingRateInr: num(data.finalQuoteInr),
+        worked: strList(mem.worked),
+        avoid: strList(mem.avoid),
+        objections: strList(mem.objections),
+        suspicion: mem.suspicion === true,
+      });
+    }
   },
 });
+
+function strList(x: unknown): string[] {
+  return Array.isArray(x) ? x.filter((s) => typeof s === "string" && s).map(String) : [];
+}
 
 /** All calls done: rank, summarise, and report back on Telegram. */
 export const finishMission = internalAction({

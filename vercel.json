@@ -5,5 +5,8 @@
   "buildCommand": "bash scripts/build-vercel.sh",
   "outputDirectory": "dist",
   "cleanUrls": true,
-  "rewrites": [{ "source": "/console", "destination": "/console/index.html" }]
+  "rewrites": [
+    { "source": "/console", "destination": "/console/index.html" },
+    { "source": "/dashboard", "destination": "/dashboard/index.html" }
+  ]
 }

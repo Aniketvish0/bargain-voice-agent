@@ -6,7 +6,7 @@ import {
   DEFAULT_LANG,
   DIAL_STAGGER_MS,
   isTtsLang,
-  MAX_VENDORS_PER_MISSION,
+  MAX_PERSONAS_PER_DIRECT_MISSION,
   VOICE_BY_LANG,
   type TtsLang,
 } from "./lib/constants";
@@ -70,13 +70,27 @@ export const createDirectMission = action({
     targetPriceInr: v.optional(v.number()),
     language: v.optional(TTS_LANG),
     /**
-     * Sequential calls to place to this one number. Defaults to 1.
+     * Names to place sequential calls under, all to the SAME number.
      *
-     * >1 exists for exactly one reason: mission memory (§1.5.1) only engages
-     * on the SECOND call of a mission, and a direct mission has only one
-     * number to dial. Use it on a consented line to exercise that path. The
-     * console never sends more than 1.
+     * WHY THIS EXISTS
+     * ---------------
+     * Cross-call leverage (§1.5) and mission memory (§1.5.1) are the two
+     * claims that only show up from call 2 onward: call N cites the price call
+     * N−1 got, BY NAME, and inherits what that call learned. Demonstrating
+     * either needs several vendors — but we have exactly one consented line to
+     * dial, so a direct mission would only ever prove call 1.
+     *
+     * Personas close that gap honestly. Each name becomes a real `vendors`
+     * row, so `missions.priorQuotes` attributes each quote to the shop that
+     * gave it and call 3 genuinely says "Leela Hotel quoted me ₹7,000" —
+     * the same code path, the same data, with one person playing all the
+     * parts. Nothing is faked downstream; only the roster is.
+     *
+     * ⚠️ Every persona dials the one number in `phoneE164`. This is a testing
+     * affordance for a CONSENTED line, not a way to reach several businesses.
      */
+    personas: v.optional(v.array(v.string())),
+    /** Legacy/simple form of `personas`: N unnamed sequential calls. */
     attempts: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<DirectResult> => {
@@ -133,6 +147,9 @@ export const createDirectMission = action({
       phoneE164: e164,
       vendorName: `Direct dial · ${formatPretty(e164)}`,
       missionType,
+      personas: (args.personas ?? [])
+        .map((p) => p.trim().slice(0, 60))
+        .filter(Boolean),
       attempts: args.attempts ?? 1,
       brief: {
         category,
@@ -170,6 +187,7 @@ export const place = internalMutation({
     phoneE164: v.string(),
     vendorName: v.string(),
     missionType: MISSION_TYPE,
+    personas: v.array(v.string()),
     attempts: v.number(),
     brief: v.object({
       category: v.string(),
@@ -193,7 +211,19 @@ export const place = internalMutation({
       return { ok: false, reason: gate.reason ?? "Blocked by the compliance gate" };
     }
 
-    const attempts = Math.max(1, Math.min(args.attempts, MAX_VENDORS_PER_MISSION));
+    /**
+     * `MAX_VENDORS_PER_MISSION` (3) caps how many DISTINCT BUSINESSES one
+     * request may disturb — that is the §15 posture and it is not relaxed
+     * here. A direct mission has exactly one business by construction, so the
+     * relevant limit for personas is a different one: how many times we may
+     * ring a single consented line. That is what MAX_PERSONAS_PER_DIRECT_MISSION
+     * bounds, and the per-originating-number daily cap (15/day, checked by the
+     * gate above) still bounds the total across every mission today.
+     */
+    const names = args.personas.slice(0, MAX_PERSONAS_PER_DIRECT_MISSION);
+    const count = names.length
+      ? names.length
+      : Math.max(1, Math.min(args.attempts, MAX_PERSONAS_PER_DIRECT_MISSION));
 
     const missionId = await ctx.db.insert("missions", {
       userId: args.userId,
@@ -208,10 +238,10 @@ export const place = internalMutation({
     });
 
     const callIds: Id<"calls">[] = [];
-    for (let i = 0; i < attempts; i++) {
+    for (let i = 0; i < count; i++) {
       const vendorId = await ctx.db.insert("vendors", {
         missionId,
-        name: attempts > 1 ? `${args.vendorName} (call ${i + 1})` : args.vendorName,
+        name: names[i] ?? (count > 1 ? `${args.vendorName} (call ${i + 1})` : args.vendorName),
         phoneE164: args.phoneE164,
         // The number came from a human, not from discovery. "curated" is the
         // honest label in the frozen source union — see schema.ts §9.

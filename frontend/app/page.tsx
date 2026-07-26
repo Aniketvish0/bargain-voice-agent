@@ -1,3 +1,8 @@
+// Imported per-route, not in the root layout: /console ships a different
+// design system that defines the same custom-property names with different
+// values, and loading both stylesheets on one page makes whichever lost the
+// cascade look broken.
+import "./globals.css";
 import Nav from "@/components/Nav";
 import Hero from "@/components/Hero";
 import Leverage from "@/components/Leverage";

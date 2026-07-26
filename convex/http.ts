@@ -70,10 +70,10 @@ http.route({
       role: b.role,
       text: String(b.text ?? ""),
       final: b.final !== false,
-      langCode: b.langCode,
-      langProbability: b.langProbability,
-      sarvamRequestId: b.sarvamRequestId,
-      tsMs: b.tsMs,
+      langCode: strOrUndef(b.langCode),
+      langProbability: numOrUndef(b.langProbability),
+      sarvamRequestId: strOrUndef(b.sarvamRequestId),
+      tsMs: numOrUndef(b.tsMs),
     });
     return ok();
   }),
@@ -90,7 +90,7 @@ http.route({
       fromLang: b.fromLang,
       toLang: b.toLang,
       confidence: Number(b.confidence ?? 0),
-      atMs: b.atMs,
+      atMs: numOrUndef(b.atMs),
     });
     return ok();
   }),
@@ -105,16 +105,29 @@ http.route({
     const b = await req.json();
     await ctx.runMutation(internal.calls.applyOutcome, {
       callId: b.callId as Id<"calls">,
-      slots: Array.isArray(b.slots) ? b.slots : [],
+      // Same null-vs-undefined trap as /ingest/turn: the extractor emits
+      // `"valueVerbatim": null` for a slot it read from a number rather than a
+      // phrase, and one such slot would reject the whole outcome.
+      slots: (Array.isArray(b.slots) ? b.slots : [])
+        .filter((s: any) => s && typeof s.key === "string")
+        .map((s: any) => ({
+          key: String(s.key).slice(0, 40),
+          value: s.value ?? null,
+          valueVerbatim: strOrUndef(s.valueVerbatim),
+          confidence: ["high", "medium", "low"].includes(s.confidence)
+            ? s.confidence
+            : "medium",
+          turnSeq: numOrUndef(s.turnSeq),
+        })),
       openingQuoteInr: numOrUndef(b.openingQuoteInr),
       finalQuoteInr: numOrUndef(b.finalQuoteInr),
-      priceVerbatim: b.priceVerbatim ?? undefined,
+      priceVerbatim: strOrUndef(b.priceVerbatim),
       deliveryChargeInr: numOrUndef(b.deliveryChargeInr),
       taxIncluded: typeof b.taxIncluded === "boolean" ? b.taxIncluded : undefined,
       quoteTurnSeq: numOrUndef(b.quoteTurnSeq),
-      terms: b.terms ?? undefined,
-      contactName: b.contactName ?? undefined,
-      holdUntil: b.holdUntil ?? undefined,
+      terms: strOrUndef(b.terms),
+      contactName: strOrUndef(b.contactName),
+      holdUntil: strOrUndef(b.holdUntil),
       closed: typeof b.closed === "boolean" ? b.closed : undefined,
     });
 
@@ -167,7 +180,7 @@ http.route({
       language: String(b.language ?? "hi-IN"),
       channel: b.channel === "prearranged" ? "prearranged" : "on_call",
       disclosureText: String(b.disclosureText ?? ""),
-      calleeResponse: b.calleeResponse ?? undefined,
+      calleeResponse: strOrUndef(b.calleeResponse),
       consentGiven: b.consentGiven !== false,
     });
     return ok();
@@ -221,7 +234,28 @@ http.route({
   }),
 });
 
+/**
+ * ⚠️ `v.optional(T)` accepts `undefined` or an ABSENT key. It rejects `null`.
+ *
+ * Python's `json.dumps` turns `None` into `null`, and `bridge/convex_client.py`
+ * always sends every optional key — so a turn with no detected language posts
+ * `"langCode": null` and the whole mutation fails argument validation with a
+ * 500. That is not a hypothetical: it silently emptied the `turns` table for
+ * the entire project, because `_post` is fire-and-forget by design and the
+ * bridge only logs the failure at WARNING while the call carries on sounding
+ * perfect. Extraction still worked (the bridge summarises from its own
+ * in-memory transcript), so every downstream artifact looked healthy while the
+ * dashboard had no transcript to show.
+ *
+ * Normalise at this boundary, not in the mutations: this is the only place
+ * where untyped JSON from another runtime enters the system.
+ */
+function strOrUndef(x: unknown): string | undefined {
+  return typeof x === "string" && x.length > 0 ? x : undefined;
+}
+
 function numOrUndef(x: unknown): number | undefined {
+  if (x === null || x === undefined || x === "") return undefined;
   const n = Number(x);
   return Number.isFinite(n) && n > 0 ? Math.round(n) : undefined;
 }

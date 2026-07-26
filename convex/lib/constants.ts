@@ -58,6 +58,45 @@ export const CURATED_VOICES = [
   "simran", "anand", "kavya", "priya", "neha", "shubh", "ishita", "rahul",
 ] as const;
 
+/**
+ * Presentation metadata for the console's voice picker.
+ *
+ * `gender` is what the speaker READS AS on a phone call, which is the only
+ * thing the person choosing cares about — it is not a claim about the voice
+ * actor. Every name here must exist in V3_SPEAKERS or TTS 400s at dial time,
+ * so the picker is built from this list rather than free text.
+ */
+export const VOICE_META: Array<{
+  id: (typeof CURATED_VOICES)[number];
+  label: string;
+  gender: "female" | "male";
+  note: string;
+}> = [
+  { id: "simran", label: "Simran", gender: "female", note: "warm, default for Hindi" },
+  { id: "anand",  label: "Anand",  gender: "male",   note: "calm, default for English" },
+  { id: "kavya",  label: "Kavya",  gender: "female", note: "bright, crisp" },
+  { id: "priya",  label: "Priya",  gender: "female", note: "measured, formal" },
+  { id: "neha",   label: "Neha",   gender: "female", note: "friendly, quick" },
+  { id: "shubh",  label: "Shubh",  gender: "male",   note: "young, energetic" },
+  { id: "ishita", label: "Ishita", gender: "female", note: "soft, unhurried" },
+  { id: "rahul",  label: "Rahul",  gender: "male",   note: "deep, matter-of-fact" },
+];
+
+/** One short line per language for the picker's "hear this voice" button. */
+export const VOICE_SAMPLE: Record<string, string> = {
+  "hi-IN": "नमस्ते! मैं आपका AI असिस्टेंट हूँ। क्या इस तारीख को कमरा उपलब्ध है?",
+  "en-IN": "Hello! I'm your AI assistant. Do you have a room available on that date?",
+  "bn-IN": "নমস্কার! আমি আপনার এআই সহকারী। ঐ তারিখে কি ঘর পাওয়া যাবে?",
+  "gu-IN": "નમસ્તે! હું તમારો AI સહાયક છું. શું તે તારીખે રૂમ ઉપલબ્ધ છે?",
+  "kn-IN": "ನಮಸ್ಕಾರ! ನಾನು ನಿಮ್ಮ AI ಸಹಾಯಕ. ಆ ದಿನಾಂಕದಂದು ಕೊಠಡಿ ಲಭ್ಯವಿದೆಯೇ?",
+  "ml-IN": "നമസ്കാരം! ഞാൻ നിങ്ങളുടെ AI അസിസ്റ്റന്റാണ്. ആ തീയതിയിൽ മുറി ലഭ്യമാണോ?",
+  "mr-IN": "नमस्कार! मी तुमचा AI सहाय्यक आहे. त्या तारखेला खोली उपलब्ध आहे का?",
+  "od-IN": "ନମସ୍କାର! ମୁଁ ଆପଣଙ୍କର AI ସହାୟକ। ସେହି ତାରିଖରେ ରୁମ୍ ଉପଲବ୍ଧ ଅଛି କି?",
+  "pa-IN": "ਸਤ ਸ੍ਰੀ ਅਕਾਲ! ਮੈਂ ਤੁਹਾਡਾ AI ਸਹਾਇਕ ਹਾਂ। ਕੀ ਉਸ ਤਾਰੀਖ਼ ਨੂੰ ਕਮਰਾ ਉਪਲਬਧ ਹੈ?",
+  "ta-IN": "வணக்கம்! நான் உங்கள் AI உதவியாளர். அந்த தேதியில் அறை கிடைக்குமா?",
+  "te-IN": "నమస్కారం! నేను మీ AI అసిస్టెంట్. ఆ తేదీన గది అందుబాటులో ఉందా?",
+};
+
 export const DEFAULT_LANG: TtsLang = "hi-IN";
 export const DEFAULT_VOICE = VOICE_BY_LANG[DEFAULT_LANG];
 
@@ -71,6 +110,16 @@ export const LLM_EXTRACT = "sarvam-105b";
 
 // ── Compliance. BUILD-SPEC §15. These numbers are quotable on stage. ────────
 export const MAX_VENDORS_PER_MISSION = 3;
+/**
+ * Personas one DIRECT mission may dial on a single consented number.
+ *
+ * This is not a relaxation of MAX_VENDORS_PER_MISSION, which bounds distinct
+ * businesses disturbed per request. A direct mission touches exactly one
+ * number; this bounds how many times it rings so cross-call leverage has more
+ * than two data points to work with. The per-number daily cap below still
+ * bounds the total across all missions.
+ */
+export const MAX_PERSONAS_PER_DIRECT_MISSION = 5;
 export const MAX_DIALS_PER_MISSION = 5;
 /** TCCCPR "Bulk" trips above 20/day. We sit at 15 deliberately. */
 export const MAX_DIALS_PER_NUMBER_PER_DAY = 15;

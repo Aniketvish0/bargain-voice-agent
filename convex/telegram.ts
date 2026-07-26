@@ -200,6 +200,16 @@ async function startMission(
 ) {
   const user = await ctx.runQuery(internal.users.get, { userId });
 
+  // One conversation, two surfaces. The console reads this same table through
+  // `console.history`, so a mission started here shows up there and vice
+  // versa. Telegram is a peer front-end, not the owner of the thread.
+  await ctx.runMutation(internal.telegramQueries.logChat, {
+    userId,
+    role: "user",
+    text: rawText,
+    surface: "telegram",
+  });
+
   const brief: Brief = await ctx.runAction(internal.intent.extractBrief, {
     text: rawText,
     userPrefLang: detectedLang ?? user?.preferredLang ?? DEFAULT_LANG,
@@ -207,6 +217,12 @@ async function startMission(
 
   if (brief.clarifyingQuestion) {
     await tg.sendMessage(chatId, `🤔 ${escapeHtml(brief.clarifyingQuestion)}`);
+    await ctx.runMutation(internal.telegramQueries.logChat, {
+      userId,
+      role: "assistant",
+      text: brief.clarifyingQuestion,
+      surface: "telegram",
+    });
     return;
   }
 
@@ -226,6 +242,16 @@ async function startMission(
       walkAwayInr: brief.walkAwayInr,
       language: lang,
     },
+  });
+
+  await ctx.runMutation(internal.telegramQueries.logChat, {
+    userId,
+    missionId,
+    role: "assistant",
+    text:
+      `Looking for ${brief.category}${brief.locality ? ` in ${brief.locality}` : ""}. ` +
+      `Waiting for you to approve the roster — nothing dials yet.`,
+    surface: "telegram",
   });
 
   await tg.sendMessage(chatId, renderBriefCard(brief, lang), [
