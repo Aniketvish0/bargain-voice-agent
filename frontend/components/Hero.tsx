@@ -20,7 +20,12 @@ export default function Hero() {
         </p>
 
         <div className="hero-cta rv">
-          <a href="#cta" className="btn solid">
+          <a
+            href="https://t.me/orydl_bot"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn solid"
+          >
             SEND ORYDL ON YOUR FIRST CALL
           </a>
           <a href="#console" className="btn ghost">

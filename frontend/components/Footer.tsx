@@ -21,7 +21,12 @@ export default function Footer() {
           <h2>Send an envoy. Skip the phone.</h2>
           <p>One goal in, the best deal out.</p>
           <div className="cta">
-            <a href="#" className="btn solid">
+            <a
+              href="https://t.me/orydl_bot"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn solid"
+            >
               GIVE IT A GOAL
             </a>
             <a href="#flow" className="btn ghost">
