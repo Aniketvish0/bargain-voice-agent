@@ -154,10 +154,10 @@ export default function App() {
         {/* ------------------------------ left rail ------------------------------ */}
         <aside className="rail">
           <div className="rail-head">
-            <div className="brand">
+            <a className="brand" href="/" title="Back to orydl.com">
               ORYDL<span className="dev">.</span>
               <span className="deva">the calling envoy</span>
-            </div>
+            </a>
           </div>
 
           <button

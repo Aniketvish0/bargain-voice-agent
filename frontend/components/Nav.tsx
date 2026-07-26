@@ -19,11 +19,14 @@ export default function Nav() {
             VOICE STACK
           </a>
           <ThemeToggle />
+          <a href="/console" className="btn ghost">
+            OPEN CONSOLE
+          </a>
           <a
             href="https://t.me/orydl_bot"
             target="_blank"
             rel="noopener noreferrer"
-            className="btn ghost"
+            className="btn solid"
           >
             GIVE IT A GOAL
           </a>

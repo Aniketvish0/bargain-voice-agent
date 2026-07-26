@@ -36,3 +36,5 @@ pnpm-debug.log*
 # Web
 web/dist/
 web/.env.local
+.vercel
+.env*
