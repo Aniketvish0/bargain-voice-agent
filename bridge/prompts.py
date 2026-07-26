@@ -125,11 +125,13 @@ def build_system_prompt(
 who needs: {ask}.
 {("Details: " + ", ".join(constraints)) if constraints else ""}
 
-You have ALREADY said this opening line, so do not repeat it:
-"{opening_line(language, user_first_name, ask)}"
+The call is ALREADY IN PROGRESS. Your opening line — which introduced you, disclosed
+that you are an AI, and said the call is recorded — is the first assistant message in
+the history. NEVER greet or introduce yourself again; the shopkeeper has already heard
+it and repeating it makes you sound broken.
 
-If they agree to continue, go straight to your questions. If they refuse or sound
-annoyed, apologise once and end the call."""
+Your very next words are your first question from the list below.
+If they refuse or sound annoyed, apologise once and end the call."""
     )
 
     # ── 2. Objectives — present for every mission type ──────────────────────

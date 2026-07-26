@@ -97,7 +97,18 @@ class ConversationDriver:
         if self._watchdog is None:
             self._watchdog = asyncio.create_task(self._watch_silence(task))
 
-    async def greet_done(self) -> None:
+    def seed_greeting(self, text: str) -> None:
+        """
+        Record the opening line as our first assistant turn.
+
+        The greeting is spoken with a raw TTSSpeakFrame, so without this the
+        model has no idea it already introduced itself. Telling it "you have
+        already said this" in the system prompt is not enough — sarvam-30b
+        cheerfully greeted the same shopkeeper twice. Putting the line in the
+        history as an actual assistant turn fixes it, because now the model is
+        continuing a conversation rather than starting one.
+        """
+        self._messages.append({"role": "assistant", "content": text})
         self._last_activity = time.monotonic()
 
     # ── loop ────────────────────────────────────────────────────────────────
@@ -153,12 +164,22 @@ class ConversationDriver:
         # Bengali for the rest of the call. The mission language is the
         # authority; a real language switch goes through the confidence- and
         # hysteresis-gated path in bot.py, never through transcript drift.
+        # The last assistant line, so we can forbid repeating it verbatim.
+        last_agent = next(
+            (m["content"] for m in reversed(self._messages) if m["role"] == "assistant"),
+            "",
+        )
         pin = {
             "role": "system",
             "content": (
-                f"Reply ONLY in {self._state.language}. Ignore the language of the "
-                f"last transcript — it is often mis-detected on short or noisy "
-                f"speech. One short spoken sentence, under 25 words."
+                f"LANGUAGE: reply ONLY in {self._state.language}, even if the caller "
+                f"just spoke English or another language. Transcript language is "
+                f"frequently mis-detected on short or noisy speech and must be ignored.\n"
+                f"LENGTH: one spoken sentence, under 25 words, no markdown.\n"
+                f"DO NOT REPEAT YOURSELF. Your previous line was: \"{last_agent[:160]}\". "
+                f"If they did not answer it, ask it a DIFFERENT way, more simply — or "
+                f"accept that they cannot answer and move to your next question. "
+                f"Never send the same sentence twice."
             ),
         }
         convo = [self._messages[0]] + self._messages[-12:][1:] + [pin]

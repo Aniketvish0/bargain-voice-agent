@@ -374,6 +374,7 @@ def build_pipeline(
         convex.turn(state.call_id, "agent", greeting)
         state.transcript.append({"seq": state.turn_seq, "role": "agent", "text": greeting})
         state.turn_seq += 1
+        conversation.seed_greeting(greeting)   # so it does not greet twice
         await task.queue_frame(TTSSpeakFrame(greeting))
 
     @transport.event_handler("on_client_disconnected")
