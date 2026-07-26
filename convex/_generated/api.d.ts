@@ -8,14 +8,25 @@
  * @module
  */
 
+import type * as calls from "../calls.js";
 import type * as gate from "../gate.js";
+import type * as http from "../http.js";
 import type * as intent from "../intent.js";
 import type * as lib_compliance from "../lib/compliance.js";
 import type * as lib_constants from "../lib/constants.js";
 import type * as lib_inr from "../lib/inr.js";
 import type * as lib_phone from "../lib/phone.js";
 import type * as lib_sarvam from "../lib/sarvam.js";
+import type * as missions from "../missions.js";
+import type * as orchestrator from "../orchestrator.js";
+import type * as orchestratorQueries from "../orchestratorQueries.js";
+import type * as summarise from "../summarise.js";
+import type * as telegram from "../telegram.js";
+import type * as telegramQueries from "../telegramQueries.js";
+import type * as tgApi from "../tgApi.js";
+import type * as transcripts from "../transcripts.js";
 import type * as users from "../users.js";
+import type * as vendors from "../vendors.js";
 
 import type {
   ApiFromModules,
@@ -24,14 +35,25 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  calls: typeof calls;
   gate: typeof gate;
+  http: typeof http;
   intent: typeof intent;
   "lib/compliance": typeof lib_compliance;
   "lib/constants": typeof lib_constants;
   "lib/inr": typeof lib_inr;
   "lib/phone": typeof lib_phone;
   "lib/sarvam": typeof lib_sarvam;
+  missions: typeof missions;
+  orchestrator: typeof orchestrator;
+  orchestratorQueries: typeof orchestratorQueries;
+  summarise: typeof summarise;
+  telegram: typeof telegram;
+  telegramQueries: typeof telegramQueries;
+  tgApi: typeof tgApi;
+  transcripts: typeof transcripts;
   users: typeof users;
+  vendors: typeof vendors;
 }>;
 
 /**
