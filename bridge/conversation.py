@@ -45,6 +45,12 @@ from pipecat.frames.frames import EndFrame, TTSSpeakFrame
 SARVAM_CHAT = "https://api.sarvam.ai/v1/chat/completions"
 
 COALESCE_SECS = float(os.getenv("COALESCE_SECS", "0.7"))
+# After WE make a counter-offer, the callee is weighing a number, not answering
+# a factual question — they pause longer, and the answer often dribbles out in
+# fragments ("nahi... itna kam nahi... 5500 last"). Coalescing on the normal
+# 0.7s window chopped that in half and fired our next rung mid-thought, so hold
+# a wider window specifically while a counter is outstanding.
+COUNTER_COALESCE_SECS = float(os.getenv("COUNTER_COALESCE_SECS", "1.5"))
 MAX_TURNS = int(os.getenv("MAX_TURNS", "16"))
 # 10s fired mid-conversation while the callee was still thinking. Phone
 # pauses run long, especially when someone is checking a register.
@@ -174,7 +180,12 @@ class ConversationDriver:
             return
         self._last_activity = time.monotonic()
         self._pending.append(text)
-        self._awaiting_counter_reply = False  # they replied — we may counter again
+        # NOTE: do NOT clear _awaiting_counter_reply here. Clearing it on ANY
+        # incoming text meant a cough, an "hmm" or a backchannel counted as
+        # "they replied" and unlocked our next rung before the callee had
+        # actually accepted or refused the price. The guard is now lifted only
+        # by a SUBSTANTIVE reply — an affirmative, a refusal, or a number —
+        # inside _respond, once we have seen what they actually said.
 
         # Follow the callee's language, but only on substantial speech.
         if lang_code and len(text.split()) >= 3:
@@ -202,6 +213,15 @@ class ConversationDriver:
         Decide what to do next. A pure function of slot state — no LLM involved.
         This is what makes an infinite re-ask impossible.
         """
+        # 0. A counter-offer is still outstanding and the last thing we heard was
+        #    not substantive (a cough, an "hmm", a backchannel). Do NOT counter
+        #    again and — just as important — do NOT fall through to reading the
+        #    deal back at their price. Hold: say nothing and give them room to
+        #    actually accept or refuse. _respond clears this guard the moment a
+        #    substantive reply lands.
+        if self._awaiting_counter_reply:
+            return "hold", ""
+
         # 1. An objective still unanswered, and not already asked twice?
         for o in self._objectives:
             k = o["key"]
@@ -237,9 +257,24 @@ class ConversationDriver:
                 # The only real ceiling is their own asking price: never offer
                 # at or above what they are already asking, or you are
                 # negotiating against yourself.
-                if self._last_offer is not None:
-                    offer = max(offer, self._last_offer)
+                prev_offer = self._last_offer
+                if prev_offer is not None:
+                    offer = max(offer, prev_offer)
                 offer = min(offer, self._best_price - 1)
+                # The ladder cannot advance: their price dropped enough that a
+                # fresh rung would land at (or below) what we already offered.
+                # Repeating the same figure is not a negotiation move, it is a
+                # loop — take their price and close instead of saying "4840?"
+                # twice. (Observed: they conceded 6000 -> 5000 and the agent kept
+                # re-proposing its own 4840.)
+                if prev_offer is not None and offer <= prev_offer:
+                    self._awaiting_counter_reply = False
+                    self._counters = 3  # ladder exhausted; go and confirm
+                    return "confirm", (
+                        f"They have come down to {self._best_price}, which is as good as "
+                        f"you will get. Accept it warmly, read the whole deal back in ONE "
+                        f"sentence, and ask them to confirm."
+                    )
                 self._last_offer = offer
                 # NEVER bid above something they have already offered. The
                 # ladder is computed off their quote, so once they concede the
@@ -330,8 +365,11 @@ class ConversationDriver:
     # ── loop ────────────────────────────────────────────────────────────────
 
     async def _after_pause(self, task) -> None:
+        # Hold a wider window while a counter is on the table — a price decision
+        # comes slower and more fragmented than a factual answer.
+        window = COUNTER_COALESCE_SECS if self._awaiting_counter_reply else COALESCE_SECS
         try:
-            await asyncio.sleep(COALESCE_SECS)
+            await asyncio.sleep(window)
         except asyncio.CancelledError:
             return
         utterance = " ".join(self._pending).strip()
@@ -345,8 +383,13 @@ class ConversationDriver:
     )
 
     def _is_affirmative(self, text: str) -> bool:
-        t = text.lower().strip(" .!?।")
-        return len(t.split()) <= 4 and any(w in t for w in self._YES)
+        # Token-aware, NOT substring. `w in t` matched "ha" inside "hai" and
+        # "hazaar", so "rate hai chhe hazaar" and even "nahi bhai" read as
+        # "yes". Harmless while the LLM lagged a turn behind the utterance, but
+        # once code decides the goal from the SAME utterance that carried the
+        # price, that false positive banked a counter nobody had accepted.
+        toks = [w.strip(" .!?।,\"'") for w in text.lower().split()]
+        return len(toks) <= 4 and any(w in self._YES for w in toks)
 
     async def _respond(self, utterance: str, task) -> None:
         if self._closing:
@@ -380,17 +423,21 @@ class ConversationDriver:
             await self._close(task)
             return
 
-        goal_kind, instruction = self._next_goal()
         self._messages.append({"role": "user", "content": utterance})
 
+        # PASS 1 — EXTRACTION. Read what they JUST said, BEFORE any goal is
+        # chosen. Deciding the goal off pre-fold slot state was a one-turn lag:
+        # their price landed but the goal was still "ask the price", so we
+        # re-asked it and only countered a turn later — landing that counter on
+        # top of the next (often empty) utterance. Extract, fold, THEN decide.
         try:
-            heard, reply = await self._complete(instruction)
+            heard = await self._extract(utterance)
         except asyncio.CancelledError:
             self._messages.pop()  # superseded; don't poison the history
             raise
         except Exception as e:  # noqa: BLE001
-            logger.warning(f"[{self._state.call_id}] LLM failed: {e}")
-            return
+            logger.warning(f"[{self._state.call_id}] extract failed: {e}")
+            heard = {}
 
         # Fold in anything they told us, whether or not we asked for it.
         rejected_price = False
@@ -474,17 +521,64 @@ class ConversationDriver:
                 if not had_price:
                     price_just_landed = True
         if heard:
-            logger.info(f"[{self._state.call_id}] goal={goal_kind} slots={self._slots}")
+            logger.info(f"[{self._state.call_id}] extracted {heard}; slots={self._slots}")
 
-        # The reply was generated in the SAME call that produced the bad number,
-        # so it quotes it back. Rejecting the slot is not enough — we would
-        # still have said "so that's ₹86,000 per night, correct?" out loud.
-        # Replace the whole turn with a plain request to repeat the figure.
+        # A SUBSTANTIVE reply — an affirmative, a refusal, or a number — is what
+        # lifts the counter guard. A cough, an "hmm" or a backchannel must not.
+        # (This is the other half of the guard fix; on_user_text no longer
+        # clears it on every utterance.)
+        if self._awaiting_counter_reply and self._is_substantive(utterance, heard):
+            self._awaiting_counter_reply = False
+            # Did they ACCEPT our standing offer, or move again? An affirmative
+            # with NO fresh number means they took our last_offer — bank it as
+            # the deal so the next goal confirms it instead of haggling on past
+            # their yes (previously we won 5280, heard "yes", then confirmed the
+            # original 6000 because the accepted figure was never written back).
+            # A new number is a concession/counter and is left to the ladder.
+            heard_price = any(
+                self._types.get(k) in ("money", "number") for k in (heard or {})
+            )
+            if self._last_offer and self._is_affirmative(utterance) and not heard_price:
+                logger.info(f"[{self._state.call_id}] counter accepted at {self._last_offer}")
+                self._best_price = self._last_offer
+                for o in self._objectives:
+                    if o.get("type") == "money":
+                        self._slots[o["key"]] = self._last_offer
+                self._counters = 3        # done haggling
+                self._deal_agreed = True  # we WON — never walk away now
+
+        goal_kind, instruction = self._next_goal()
+
+        # HOLD: a counter is on the table and nothing substantive came back. Say
+        # nothing and give them room — do NOT counter again, and do NOT fall
+        # through to reading the deal back at their price. This is the fix for
+        # "the callee gets no room to answer at a price point".
+        if goal_kind == "hold":
+            logger.info(
+                f"[{self._state.call_id}] holding — awaiting a real answer to our counter"
+            )
+            self._last_activity = time.monotonic()
+            return
+
+        # PASS 2 — PHRASING. The goal is already decided by code; the model only
+        # puts it into words. On a rejected price we do not phrase at all — the
+        # reply that quoted the bad figure ("so that's ₹86,000, correct?") was
+        # generated in the same breath as the figure. Say a fixed request to
+        # repeat the number instead.
         if rejected_price:
             reply = {
                 "hi-IN": "माफ़ कीजिए, नंबर ठीक से सुनाई नहीं दिया — rate फिर से बता दीजिए?",
                 "en-IN": "Sorry, I didn't catch that number — could you say the rate again?",
             }.get(self._reply_lang, "Sorry, could you repeat the rate please?")
+        else:
+            try:
+                reply = await self._phrase(instruction)
+            except asyncio.CancelledError:
+                self._messages.pop()  # superseded; don't poison the history
+                raise
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[{self._state.call_id}] phrase failed: {e}")
+                return
 
         if not reply:
             return
@@ -531,18 +625,6 @@ class ConversationDriver:
         await self._say(task, reply)
         self._last_activity = time.monotonic()
 
-        # They accepted our counter-offer. Bank it — previously the agent won
-        # 5280, heard "Yes", and then confirmed the original 6000 because the
-        # accepted figure was never written back.
-        if goal_kind == "counter" and self._last_offer and self._is_affirmative(utterance):
-            logger.info(f"[{self._state.call_id}] counter accepted at {self._last_offer}")
-            self._best_price = self._last_offer
-            for o in self._objectives:
-                if o.get("type") == "money":
-                    self._slots[o["key"]] = self._last_offer
-            self._counters = 3      # done haggling
-            self._deal_agreed = True  # ...but we WON, so never walk away now
-
         # We used to close 6s after the readback, which hung up on people
         # mid-sentence. Let the silence watchdog end the call instead - it
         # already waits for a genuine pause.
@@ -558,9 +640,102 @@ class ConversationDriver:
             if not self._closing:
                 await self._close(task)
 
-    async def _complete(self, instruction: str) -> tuple[dict, str]:
-        """One round trip: interpret what they said AND phrase the next line."""
+    # Refusal / rejection markers, across the Indic languages we see most. Used
+    # only to decide whether an utterance is SUBSTANTIVE enough to lift the
+    # counter guard — never to drive the state machine.
+    _NO = (
+        "no", "nope", "nah", "nahi", "nahin", "na", "mat", "nako", "venda",
+        "illai", "cannot", "can't", "cant", "won't", "wont", "नहीं", "ना", "मत",
+    )
+    _HINDI_NUM_WORDS = (
+        "hazaar", "hazar", "sau", "lakh", "ek", "do", "teen", "char", "paanch",
+        "panch", "chhe", "che", "saat", "aath", "nau", "das",
+    )
+
+    def _is_substantive(self, utterance: str, heard: dict) -> bool:
+        """
+        Did the callee actually respond to our counter, or just make noise?
+
+        A price decision is answered by an ACCEPTANCE, a REFUSAL, or a NUMBER.
+        Everything else — "hmm", "achha", a cough, silence broken by a
+        throat-clear — is a backchannel and must NOT be read as "they replied",
+        or we counter over them before they have decided. Kept deliberately
+        wide: when unsure, treat it as substantive rather than talk over them.
+        """
+        if heard:  # the extractor pulled a real slot value out of it
+            return True
+        t = utterance.lower()
+        toks = {w.strip(" .!?।,") for w in t.split()}
+        if self._is_affirmative(utterance):
+            return True
+        if toks & set(self._NO):
+            return True
+        if _NUM.search(t):
+            return True
+        if toks & set(self._HINDI_NUM_WORDS):
+            return True
+        return False
+
+    async def _extract(self, utterance: str) -> dict:
+        """
+        PASS 1 — a cheap, directive-free read of the caller's last utterance.
+
+        Split out from phrasing on purpose: one call doing extraction AND
+        obeying a turn directive AND writing a sentence is what produced
+        hallucinated slots (hasRoom=False on a price turn), directive example
+        text spoken aloud, and the wrong number said. This pass has ONE job —
+        report what they said — so it cannot be pulled off task by the goal.
+        """
         keys = ", ".join(f'"{o["key"]}"' for o in self._objectives) or '"none"'
+        extractor = {
+            "role": "system",
+            "content": (
+                f"You are a transcription analyst, not a speaker. Do NOT reply to the "
+                f"caller, do NOT negotiate, do NOT ask anything.\n"
+                f'The caller just said: "{utterance}"\n'
+                f"Report ONLY what THIS line states, as JSON: {{\"heard\": {{}}}}\n"
+                f'"heard" is keyed by: {keys}. Integers in rupees for money/number slots, '
+                f"true/false for yes/no slots. Omit any key they did not actually address "
+                f"in this line — never guess a number, never invent a boolean, never carry "
+                f"a value over from earlier. If they said nothing informative, return "
+                f'{{"heard": {{}}}}.'
+            ),
+        }
+        convo = [self._messages[0]] + self._messages[-6:] + [extractor]
+        r = await self._client.post(
+            SARVAM_CHAT,
+            headers={"Authorization": f"Bearer {self._api_key}"},
+            json={
+                "model": os.getenv("LLM_MODEL", "sarvam-30b"),
+                "messages": convo,
+                "max_tokens": 120,
+                "temperature": 0.0,
+                "reasoning_effort": None,  # else content comes back null
+                "response_format": {"type": "json_object"},
+            },
+        )
+        if r.status_code >= 400:
+            raise RuntimeError(f"{r.status_code}: {r.text[:160]}")
+        content = (r.json().get("choices") or [{}])[0].get("message", {}).get("content") or ""
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            a, b = content.find("{"), content.rfind("}")
+            if a < 0 or b < 0:
+                return {}
+            data = json.loads(content[a : b + 1])
+        return data.get("heard") or {}
+
+    async def _phrase(self, instruction: str) -> str:
+        """
+        PASS 2 — put the ALREADY-DECIDED goal into one spoken sentence.
+
+        Code has chosen the move (ask / counter / confirm / walkaway) and the
+        exact number; this pass only phrases it. It is told the facts are
+        already recorded so it does not re-extract, and it may not introduce a
+        number of its own — removing the class of bug where the directive named
+        one figure and the model spoke another.
+        """
         director = {
             "role": "system",
             "content": (
@@ -575,6 +750,8 @@ class ConversationDriver:
                 )
                 + f"NEVER ask them to confirm a number that YOU proposed — only ever a "
                 f"number THEY gave you.\n"
+                f"Say ONLY the number named in YOUR NEXT MOVE, if any; do not invent, "
+                f"round, or substitute a different figure.\n"
                 f"ALREADY KNOWN — never ask about these again: "
                 f"{json.dumps(self._slots, ensure_ascii=False) if self._slots else 'nothing yet'}\n"
                 f"LANGUAGE: reply in {self._reply_lang}, matching the caller.\n"
@@ -585,10 +762,8 @@ class ConversationDriver:
                 f"NEVER assert something they have not told you — no 'so it's not "
                 f"available', no invented price, no assumed sold-out. If you don't "
                 f"know, ask.\n\n"
-                f'Return ONLY JSON: {{"heard": {{}}, "reply": "..."}}\n'
-                f'"heard" = values the caller JUST gave, keyed by: {keys}. Integers in '
-                f"rupees for money, true/false for yes/no. Omit anything they did not "
-                f'actually say — never guess. "reply" = exactly what you will speak next.'
+                f'Return ONLY JSON: {{"reply": "..."}} — "reply" is exactly what you '
+                f"will speak next, nothing else."
             ),
         }
         convo = [self._messages[0]] + self._messages[-10:][1:] + [director]
@@ -612,9 +787,9 @@ class ConversationDriver:
         except json.JSONDecodeError:
             a, b = content.find("{"), content.rfind("}")
             if a < 0 or b < 0:
-                return {}, content.strip()[:300]  # salvage — better than silence
+                return content.strip()[:300]  # salvage — better than silence
             data = json.loads(content[a : b + 1])
-        return data.get("heard") or {}, (data.get("reply") or "").strip()
+        return (data.get("reply") or "").strip()
 
     # ── exits ───────────────────────────────────────────────────────────────
 
