@@ -58,8 +58,25 @@ RULES:
   "chaar hazaar"=4000, "sawa lakh"=125000, "dedh lakh"=150000.
   "saade X"=X+0.5, "sawa X"=X*1.25, "paune X"=X*0.75, "dedh"=1.5.
 - Integers in rupees. NEVER invent a price that was not spoken — null is correct.
-- The agent reads the whole deal back near the end of the call. THAT LINE IS THE
-  MOST RELIABLE SOURCE — prefer it over anything earlier in the transcript.
+
+⚠️ ONLY A "vendor" TURN CAN ESTABLISH A FACT. This is the most important rule here.
+  The agent's turns are ATTEMPTS to summarise and are frequently WRONG: it states
+  things the vendor never said and negates things the vendor did say. Real failures
+  from live calls that this rule exists to stop:
+    - vendor: "फोर थाउजेंड तक हो जाएगा, थ्री थाउजेंड कम है"  (= 4000, and 3000 is too low)
+      agent:  "your best rate under 3000 is 3000 rupees"      -> 3000 got recorded. WRONG.
+    - vendor: "डिलीवरी फ्री है"   agent: "delivery free nahi hai" -> recorded false. WRONG.
+  Therefore:
+  - Take every value from the VENDOR's own words. Where the agent's read-back
+    disagrees with an explicit vendor figure, THE VENDOR WINS, every time.
+  - A read-back counts only if the vendor AFFIRMS it ("haan"/"yes"/"sahi hai") AND it
+    does not contradict a number the vendor stated earlier. A bare "yes" after a wrong
+    read-back is agreement-by-fatigue, not confirmation — keep the earlier explicit
+    figure and drop confidence to "low".
+  - "X tak ho jayega" means the price IS X. "X nahi ho payega" means X is REFUSED —
+    never record a refused number as the quote.
+  - If the vendor never said a number, finalQuoteInr is null. Null beats a number
+    nobody said.
 - "memory" is coaching for the NEXT call in the same mission. Be specific and
   behavioural ("volunteered a discount when two nights was mentioned"), never
   generic ("be polite"). Keep every line under 12 words. Omit what you did not

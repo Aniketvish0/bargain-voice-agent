@@ -121,8 +121,24 @@ export const MAX_VENDORS_PER_MISSION = 3;
  */
 export const MAX_PERSONAS_PER_DIRECT_MISSION = 5;
 export const MAX_DIALS_PER_MISSION = 5;
-/** TCCCPR "Bulk" trips above 20/day. We sit at 15 deliberately. */
-export const MAX_DIALS_PER_NUMBER_PER_DAY = 15;
+/**
+ * Dials per day from ONE ORIGINATING number (ours), not per callee.
+ *
+ * ⚠️ RAISED FROM 15 TO 100 FOR TEST DAYS. Read this before demoing.
+ *
+ * TCCCPR treats a sender as "Bulk" above ~20/day from one originating number,
+ * and 15 was chosen to sit deliberately under that. 100 is over it. The
+ * justification today is narrow and does not generalise: every dial is going
+ * to ONE number whose owner has consented in writing, so the volume is our own
+ * test traffic rather than unsolicited contact with businesses.
+ *
+ * This does NOT change how often any single business can be rung — that is the
+ * separate 24h per-callee throttle in gate.ts, which still applies to everyone
+ * without a logged prearranged consent row.
+ *
+ * 🔴 Put this back to 15 before dialling anything from the `leads` table.
+ */
+export const MAX_DIALS_PER_NUMBER_PER_DAY = 100;
 export const MAX_DIALS_PER_NUMBER_PER_WEEK = 60;
 export const CALL_WINDOW_START_IST = 10;
 export const CALL_WINDOW_END_IST = 20;

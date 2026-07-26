@@ -265,6 +265,33 @@ export const place = internalMutation({
       );
     }
 
+    /**
+     * Put the direct dial into the SHARED conversation thread.
+     *
+     * `chatMessages` is what makes Telegram and the console one history rather
+     * than two. A mission created from the direct-dial form is still something
+     * the user asked for, so it belongs in that thread — otherwise the console
+     * shows a mission in the rail with no conversation explaining where it
+     * came from, and the Telegram history looks like the only real one.
+     */
+    await ctx.runMutation(internal.telegramQueries.logChat, {
+      userId: args.userId,
+      missionId,
+      role: "user",
+      text: args.rawRequest,
+      surface: "web",
+    });
+    await ctx.runMutation(internal.telegramQueries.logChat, {
+      userId: args.userId,
+      missionId,
+      role: "assistant",
+      text:
+        count > 1
+          ? `Calling ${args.phoneE164} ${count} times as ${names.join(", ")} — one at a time, each carrying the last real quote in as leverage.`
+          : `Calling ${args.phoneE164} now — ${args.missionType}.`,
+      surface: "web",
+    });
+
     await ctx.scheduler.runAfter(DIAL_STAGGER_MS, internal.orchestrator.dialNext, {
       missionId,
     });
