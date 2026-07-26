@@ -44,7 +44,9 @@ SARVAM_CHAT = "https://api.sarvam.ai/v1/chat/completions"
 
 COALESCE_SECS = float(os.getenv("COALESCE_SECS", "0.7"))
 MAX_TURNS = int(os.getenv("MAX_TURNS", "16"))
-SILENCE_NUDGE_SECS = float(os.getenv("SILENCE_NUDGE_SECS", "10"))
+# 10s fired mid-conversation while the callee was still thinking. Phone
+# pauses run long, especially when someone is checking a register.
+SILENCE_NUDGE_SECS = float(os.getenv("SILENCE_NUDGE_SECS", "14"))
 # Ask any one objective at most this many times, then accept it is unanswerable.
 MAX_ASKS_PER_OBJECTIVE = 2
 
@@ -77,6 +79,9 @@ class ConversationDriver:
 
         b = brief.get("brief", {})
         self._objectives: list[dict] = b.get("objectives", [])
+        self._types: dict[str, str] = {
+            o["key"]: o.get("type", "text") for o in self._objectives
+        }
         self._target = b.get("targetPriceInr")
         self._mission_type = brief.get("missionType", "negotiate")
         self._prior_quotes = brief.get("priorQuotes", [])
@@ -86,6 +91,11 @@ class ConversationDriver:
         self._asks: dict[str, int] = {o["key"]: 0 for o in self._objectives}
         self._counters = 0
         self._best_price: int | None = None
+        # Guard: a counter must be answered before we make another one.
+        # Without this the follow-up counter and the next turn's goal both
+        # fired, so the agent bid 4800 and then immediately 5280 against
+        # itself with the callee never having spoken.
+        self._awaiting_counter_reply = False
 
         self._pending: list[str] = []
         self._timer: asyncio.Task | None = None
@@ -125,6 +135,7 @@ class ConversationDriver:
             return
         self._last_activity = time.monotonic()
         self._pending.append(text)
+        self._awaiting_counter_reply = False  # they replied — we may counter again
 
         # Follow the callee's language, but only on substantial speech.
         if lang_code and len(text.split()) >= 3:
@@ -164,8 +175,13 @@ class ConversationDriver:
 
         # 2. Everything gathered — negotiate, if that is the mission.
         if self._mission_type == "negotiate" and self._target and self._best_price:
-            if self._best_price > self._target and self._counters < 3:
+            if (
+                self._best_price > self._target
+                and self._counters < 3
+                and not self._awaiting_counter_reply
+            ):
                 self._counters += 1
+                self._awaiting_counter_reply = True
                 step = (0.80, 0.88, 0.94)[self._counters - 1]
                 offer = max(self._target, int(self._best_price * step))
                 cite = ""
@@ -177,12 +193,20 @@ class ConversationDriver:
                         f"number exactly; never invent one."
                     )
                 return "counter", (
-                    f"They quoted {self._best_price}. Counter at about {offer} rupees, "
-                    f"warmly and briefly.{cite}"
+                    f"They quoted {self._best_price}. Do NOT accept it. Make ONE warm, "
+                    f"natural counter-offer of exactly {offer} rupees — a full spoken "
+                    f"sentence a person would actually say, like asking if they can do "
+                    f"{offer} and you'll confirm right away. Never a bare number. "
+                    f"Do NOT mention a budget, a maximum, or what you can afford.{cite}"
                 )
 
         # 3. Read the deal back and close.
         known = ", ".join(f"{k}={v}" for k, v in self._slots.items()) or "what they told you"
+        if self._counters:
+            known += (
+                f" (you have already countered {self._counters} time(s) — read back the "
+                f"price they LAST agreed to, not their opening quote)"
+            )
         return "confirm", (
             f"Read the outcome back in ONE sentence and ask them to confirm: {known}. "
             f"If you do not have their name yet, ask for it in the same sentence."
@@ -224,6 +248,36 @@ class ConversationDriver:
         for k, v in (heard or {}).items():
             if v is None or k not in self._asks:
                 continue
+
+            # TYPE CHECK. The model returned pricePerNight=False — a boolean
+            # for a money slot. That counted as "filled", so the agent never
+            # asked the price and jumped straight to confirming a deal with no
+            # number in it. A slot may only be filled by a value of its own
+            # declared type.
+            want = self._types.get(k, "text")
+            if want == "money" or want == "number":
+                if isinstance(v, bool) or not isinstance(v, (int, float)):
+                    logger.info(f"[{self._state.call_id}] ignoring {k}={v!r} (want {want})")
+                    continue
+            elif want == "boolean":
+                if not isinstance(v, bool):
+                    logger.info(f"[{self._state.call_id}] ignoring {k}={v!r} (want bool)")
+                    continue
+
+            # PRICE SANITY. Telephone STT fragments numbers badly: a real
+            # "6000" arrived as "A 6000" then "86000", the coalescer glued
+            # them, and the deal sheet recorded Rs 86,000/night against a
+            # Rs 4,000 target. A figure that far out is a transcription
+            # artefact, not an expensive hotel. Drop it and ask again.
+            if isinstance(v, (int, float)) and v > 100 and self._target:
+                if v > self._target * 6 or v < self._target * 0.15:
+                    logger.warning(
+                        f"[{self._state.call_id}] implausible price {v} vs target "
+                        f"{self._target} - treating as misheard, re-asking"
+                    )
+                    self._asks[k] = max(0, self._asks[k] - 1)
+                    continue
+
             self._slots[k] = v
             if isinstance(v, (int, float)) and v > 100:
                 self._best_price = int(v)
@@ -253,6 +307,28 @@ class ConversationDriver:
         self._state.turn_seq += 1
         await self._say(task, reply)
         self._last_activity = time.monotonic()
+
+        # Re-evaluate now that the slots are current. The goal above was
+        # computed BEFORE we knew what they just said, so the turn a price
+        # finally lands the goal is stale by exactly one step — which is why
+        # the agent used to skip straight to confirming a price it should
+        # have been haggling over.
+        follow_kind, follow_instruction = self._next_goal()
+        if follow_kind == "counter" and goal_kind != "counter":
+            try:
+                _, counter = await self._complete(follow_instruction)
+            except Exception:  # noqa: BLE001
+                counter = ""
+            if counter:
+                self._messages.append({"role": "assistant", "content": counter})
+                self._convex.turn(self._state.call_id, "agent", counter)
+                self._state.transcript.append(
+                    {"seq": self._state.turn_seq, "role": "agent", "text": counter}
+                )
+                self._state.turn_seq += 1
+                await self._say(task, counter)
+                self._last_activity = time.monotonic()
+                return
 
         if goal_kind == "confirm":
             await asyncio.sleep(6.0)

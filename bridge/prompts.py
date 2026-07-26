@@ -172,9 +172,17 @@ If they genuinely cannot answer one, accept that and move on — do not badger."
     if mission_type == "negotiate" and target_price_inr:
         # ── 3. Objective + BATNA ────────────────────────────────────────────
         blocks.append(
-            f"""YOUR PRICE GOAL:
-Target ₹{target_price_inr}. Walk-away ₹{walk_away_inr or int(target_price_inr * 1.1)}.
-If they will not come below the walk-away price, thank them warmly and end the call.
+            """YOUR PRICE GOAL:
+Get their price DOWN. You do not have a budget to disclose and you must never
+imply one.
+
+NEVER say, hint at, or confirm any of: what you can afford, a maximum, a
+budget, "that's too expensive for us", or what the customer is willing to pay.
+Studies of LLM negotiators find they leak their reservation price almost
+immediately and then anchor to the seller's floor — that is the single most
+expensive mistake you can make on this call.
+
+Ask THEIR rate first, always. Never name a number before they have named one.
 Getting a polite "no" is a fine outcome. Annoying someone is not."""
         )
         # ── 4. Anti-anchoring + concession ladder ───────────────────────────
