@@ -101,6 +101,7 @@ class ConversationDriver:
         self._last_offer: int | None = None
         self._just_heard: dict = {}
         self._just_asked_recently: set = set()
+        self._odd_price_seen: int | None = None
 
         self._pending: list[str] = []
         self._timer: asyncio.Task | None = None
@@ -370,7 +371,7 @@ class ConversationDriver:
                     logger.info(f"[{self._state.call_id}] ignoring {k}={v!r} (want money)")
                     continue
             elif want == "number":
-                if isinstance(v, bool) or not isinstance(v, (int, float)):
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
                     logger.info(f"[{self._state.call_id}] ignoring {k}={v!r} (want {want})")
                     continue
             elif want == "boolean":
@@ -384,7 +385,13 @@ class ConversationDriver:
             # Rs 4,000 target. A figure that far out is a transcription
             # artefact, not an expensive hotel. Drop it and ask again.
             if isinstance(v, (int, float)) and v > 100 and self._target:
-                if v > self._target * 6 or v < self._target * 0.15:
+                if (v > self._target * 6 or v < self._target * 0.15) and \
+                        self._odd_price_seen != int(v):
+                    # First time only. Saying the same figure twice is
+                    # evidence, not a transcription artefact — live, a seller
+                    # repeated 60000 three times against an 8000 target and we
+                    # kept telling them we hadn't caught it.
+                    self._odd_price_seen = int(v)
                     logger.warning(
                         f"[{self._state.call_id}] implausible price {v} vs target "
                         f"{self._target} - treating as misheard, re-asking"
@@ -496,7 +503,10 @@ class ConversationDriver:
                 f"LENGTH: ONE spoken sentence, under 25 words. No markdown, no lists.\n"
                 f"NEVER speak a placeholder like [price] or [name] — if you do not have "
                 f"a value, ask for it instead. NEVER say an internal field name such as "
-                f"hasRoom or pricePerNight; use ordinary words a shopkeeper would use.\n\n"
+                f"like hasRoom or pricePerNight; use ordinary words.\n"
+                f"NEVER assert something they have not told you — no 'so it's not "
+                f"available', no invented price, no assumed sold-out. If you don't "
+                f"know, ask.\n\n"
                 f'Return ONLY JSON: {{"heard": {{}}, "reply": "..."}}\n'
                 f'"heard" = values the caller JUST gave, keyed by: {keys}. Integers in '
                 f"rupees for money, true/false for yes/no. Omit anything they did not "
