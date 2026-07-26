@@ -2,34 +2,54 @@ import { useEffect, useRef } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { Mic, Phone, Shield, Text } from "./Icons";
+
+const LANG_NAME: Record<string, string> = {
+  "hi-IN": "Hindi",
+  "en-IN": "English",
+  "bn-IN": "Bengali",
+  "gu-IN": "Gujarati",
+  "kn-IN": "Kannada",
+  "ml-IN": "Malayalam",
+  "mr-IN": "Marathi",
+  "od-IN": "Odia",
+  "pa-IN": "Punjabi",
+  "ta-IN": "Tamil",
+  "te-IN": "Telugu",
+};
 
 /**
- * The live transcript.
+ * The mission thread, read top to bottom like a chat:
+ *   the ask → what the agent understood → the live call transcript.
  *
- * Subscribes to TWO queries, per BUILD-SPEC §9 rule 2:
+ * Subscribes to TWO queries for the transcript, per BUILD-SPEC §9 rule 2:
  *   - `turns`       COLD, re-runs only when a final lands
  *   - `livePartial` HOT, reads exactly one document, up to 4 Hz
- * and renders [...turns, partial]. Merging them into one query would make
- * every partial re-read the whole turn history.
+ * Merging them into one query would make every partial re-read the whole
+ * turn history.
  */
 export function Transcript({
   token,
+  mission,
+  vendors,
   rows,
   callId,
-  onSelectCall,
   scrollToSeq,
 }: {
   token: string;
+  mission: any;
+  vendors: any[];
   rows: any[];
   callId: Id<"calls"> | null;
-  onSelectCall: (id: Id<"calls">) => void;
   scrollToSeq: number | null;
 }) {
-  const turns = useQuery(api.transcripts.turns, callId ? { token, callId } : "skip");
-  const partial = useQuery(api.transcripts.livePartial, callId ? { callId } : "skip");
-  const switches = useQuery(
-    api.transcripts.langSwitchesForCall,
+  const turns = useQuery(
+    api.transcripts.turns,
     callId ? { token, callId } : "skip",
+  );
+  const partial = useQuery(
+    api.transcripts.livePartial,
+    callId ? { callId } : "skip",
   );
 
   const endRef = useRef<HTMLDivElement>(null);
@@ -37,62 +57,138 @@ export function Transcript({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [turns?.length, partial?.text]);
+  }, [turns?.length, partial?.text, callId]);
 
-  // Clicking a price in the comparison panel scrolls to the line where it was
+  // Clicking a price in the side panel scrolls to the line where it was
   // spoken. That link between a number and its evidence is what makes the
   // whole thing feel real rather than generated.
   useEffect(() => {
     if (scrollToSeq == null) return;
     const el = seqRefs.current[scrollToSeq];
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      el.style.transition = "background 200ms";
-      el.style.background = "rgba(77,163,255,.14)";
-      setTimeout(() => { el.style.background = "transparent"; }, 1600);
-    }
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.remove("flash");
+    void el.offsetWidth; // restart the animation
+    el.classList.add("flash");
   }, [scrollToSeq, turns]);
 
   const active = rows.find((r) => r.callId === callId);
-  const switchAt = new Map<number, any>();
-  for (const s of switches ?? []) switchAt.set(s.atMs, s);
+  const blocked = vendors.filter((v) => !v.gatePassed);
+  const brief = mission?.brief;
+  const connecting =
+    active && ["queued", "dialing", "ringing"].includes(active.status);
 
   return (
-    <>
-      {rows.length > 0 && (
-        <div className="tabs">
-          {rows.map((r) => (
-            <button
-              key={r.callId}
-              className={`tab${r.callId === callId ? " active" : ""}`}
-              onClick={() => onSelectCall(r.callId)}
-            >
-              <span className={`dot ${r.status}`} />
-              {r.vendorName}
-              {r.finalQuoteInr ? (
-                <b className="num">₹{r.finalQuoteInr.toLocaleString("en-IN")}</b>
-              ) : null}
-            </button>
-          ))}
-        </div>
-      )}
+    <div className="thread">
+      <div className="thread-in">
+        {mission && (
+          <>
+            <div className="daymark">
+              {new Date(mission.createdAt).toLocaleString("en-IN", {
+                day: "numeric",
+                month: "short",
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+            </div>
 
-      <div className="transcript">
-        {!callId && (
-          <div className="empty">
-            <div className="big">No call selected</div>
-            <div>Pick a mission on the left, or send a request to @orydl_bot.</div>
+            <div className="ask">
+              <div className="lb">
+                {mission.inputMode === "voice" ? <Mic /> : <Text />}
+                {mission.inputMode === "voice" ? "voice note" : "you"}
+              </div>
+              {mission.rawRequest}
+            </div>
+
+            {brief && (
+              <div className="brief">
+                <div className="lb">what orydl understood</div>
+                <div className="tags">
+                  <span className="tag">
+                    <b>{brief.category}</b>
+                  </span>
+                  {brief.locality && <span className="tag">{brief.locality}</span>}
+                  <span className="tag">
+                    {LANG_NAME[brief.language] ?? brief.language}
+                  </span>
+                  {(brief.constraints ?? []).map((c: string) => (
+                    <span className="tag" key={c}>
+                      {c}
+                    </span>
+                  ))}
+                  {brief.targetPriceInr ? (
+                    <span className="tag">
+                      target <b className="num">₹{brief.targetPriceInr.toLocaleString("en-IN")}</b>
+                    </span>
+                  ) : null}
+                  {brief.walkAwayInr ? (
+                    <span className="tag">
+                      walk away <b className="num">₹{brief.walkAwayInr.toLocaleString("en-IN")}</b>
+                    </span>
+                  ) : null}
+                </div>
+
+                {brief.objectives?.length > 0 && (
+                  <div className="objs">
+                    {brief.objectives.map((o: any, i: number) => (
+                      <div className="obj" key={o.key}>
+                        <span className="n">{i + 1}</span>
+                        <span>{o.ask}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {blocked.length > 0 && (
+              <div className="turn system">
+                <div className="body">
+                  <Shield />
+                  {"  "}
+                  compliance gate blocked {blocked.length}{" "}
+                  {blocked.length === 1 ? "number" : "numbers"} —{" "}
+                  {[...new Set(blocked.map((b) => b.gateReason).filter(Boolean))].join(
+                    "; ",
+                  ) || "not dialable"}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {!callId && mission && rows.length === 0 && (
+          <div className="turn system">
+            <div className="body">no calls placed yet</div>
+          </div>
+        )}
+
+        {active && (
+          <div className="daymark">
+            <Phone /> {active.vendorName} · {active.phoneE164}
           </div>
         )}
 
         {callId && turns?.length === 0 && !partial && (
-          <div className="empty">
-            <div className="big">
-              {active?.status === "dialing" || active?.status === "ringing"
-                ? "☎ Ringing…"
-                : "Waiting for the call to connect"}
+          <div className="turn vendor">
+            <div className="who">{active?.vendorName ?? "them"}</div>
+            <div className="body typing">
+              {connecting ? (
+                <>
+                  <i />
+                  <i />
+                  <i />
+                </>
+              ) : (
+                <span style={{ fontSize: 13, color: "var(--paper-dim)" }}>
+                  {active?.status === "no_answer"
+                    ? "Didn't pick up."
+                    : active?.status === "failed"
+                      ? "Call failed."
+                      : "No transcript for this call."}
+                </span>
+              )}
             </div>
-            <div className="mono">{active?.phoneE164}</div>
           </div>
         )}
 
@@ -100,24 +196,34 @@ export function Transcript({
           <div
             key={t._id}
             className={`turn ${t.role}`}
-            ref={(el) => { seqRefs.current[t.seq] = el; }}
+            ref={(el) => {
+              seqRefs.current[t.seq] = el;
+            }}
           >
             <div className="who">
-              {t.role === "agent" ? "orydl" : t.role === "vendor" ? active?.vendorName ?? "them" : "system"}
+              {t.role === "agent"
+                ? "orydl"
+                : t.role === "vendor"
+                  ? (active?.vendorName ?? "them")
+                  : "system"}
               {t.langCode && t.role === "vendor" && (
                 <span className="lang-badge">{t.langCode}</span>
               )}
             </div>
             <div className="body">{t.text}</div>
             {t.romanized && <div className="roman">{t.romanized}</div>}
-            {t.textEn && t.textEn !== t.text && <div className="roman">{t.textEn}</div>}
+            {t.textEn && t.textEn !== t.text && (
+              <div className="roman">{t.textEn}</div>
+            )}
           </div>
         ))}
 
         {partial?.text && (
           <div className={`turn ${partial.role}`}>
             <div className="who">
-              {partial.role === "agent" ? "orydl" : active?.vendorName ?? "them"}
+              {partial.role === "agent"
+                ? "orydl"
+                : (active?.vendorName ?? "them")}
             </div>
             <div className="body">
               {partial.text}
@@ -128,6 +234,6 @@ export function Transcript({
 
         <div ref={endRef} />
       </div>
-    </>
+    </div>
   );
 }

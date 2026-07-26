@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/comparison.tsx","./src/components/missionrail.tsx","./src/components/transcript.tsx"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/comparison.tsx","./src/components/icons.tsx","./src/components/missionrail.tsx","./src/components/themetoggle.tsx","./src/components/transcript.tsx"],"version":"5.9.3"}

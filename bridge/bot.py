@@ -33,25 +33,19 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import (
     EndFrame,
     Frame,
-    LLMFullResponseEndFrame,
-    LLMRunFrame,
-    LLMTextFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
     TTSUpdateSettingsFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import (
-    LLMContextAggregatorPair,
-)
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-from pipecat.services.sarvam.llm import SarvamLLMService, SarvamLLMSettings
 from pipecat.services.sarvam.stt import SarvamSTTService, SarvamSTTSettings
 from pipecat.services.sarvam.tts import SarvamTTSService, SarvamTTSSettings
+from pipecat.transcriptions.language import Language
 
 from convex_client import ConvexClient
+from conversation import ConversationDriver
 from prompts import BOT_ANSWER, BOW_OUT, build_system_prompt, line, opening_line
 
 # ── Verified bulbul:v3 voices. `anushka` is v2 and 400s on v3. ──────────────
@@ -61,6 +55,16 @@ VOICE_BY_LANG: dict[str, str] = {
     "pa-IN": "tanya", "ta-IN": "kavya", "te-IN": "ishita",
 }
 TTS_11 = set(VOICE_BY_LANG)
+
+# Pipecat maps a Language ENUM to Sarvam's code. Passing the raw string
+# "hi-IN" silently falls through to en-IN — the call goes out in English with
+# an English voice and nothing errors anywhere. Always convert.
+LANG_ENUM: dict[str, Language] = {
+    "hi-IN": Language.HI_IN, "en-IN": Language.EN_IN, "bn-IN": Language.BN_IN,
+    "gu-IN": Language.GU_IN, "kn-IN": Language.KN_IN, "ml-IN": Language.ML_IN,
+    "mr-IN": Language.MR_IN, "od-IN": Language.OR_IN, "pa-IN": Language.PA_IN,
+    "ta-IN": Language.TA_IN, "te-IN": Language.TE_IN,
+}
 
 # Fires BEFORE the LLM sees the turn. See BowOutDetector.
 import re
@@ -100,11 +104,18 @@ class TranscriptTap(FrameProcessor):
     Sits directly after the STT service so it sees vendor speech first.
     """
 
-    def __init__(self, state: CallState, convex: ConvexClient, task_ref: dict[str, Any]):
+    def __init__(
+        self,
+        state: CallState,
+        convex: ConvexClient,
+        task_ref: dict[str, Any],
+        conversation: "ConversationDriver",
+    ):
         super().__init__()
         self._state = state
         self._convex = convex
         self._task_ref = task_ref  # populated after PipelineTask is constructed
+        self._conversation = conversation
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -151,6 +162,11 @@ class TranscriptTap(FrameProcessor):
             # ── Mid-call language switch. BUILD-SPEC §8(c).
             await self._maybe_switch_language(lang_code)
 
+            # ── Answer them. This is the conversation loop.
+            task = self._task_ref.get("task")
+            if task:
+                await self._conversation.on_user_text(text, task)
+
         await self.push_frame(frame, direction)
 
     def _record_agent(self, text: str) -> None:
@@ -168,6 +184,11 @@ class TranscriptTap(FrameProcessor):
         if not lang_code or lang_code == st.language or lang_code not in TTS_11:
             st.lang_streak = 0
             return
+        # A two-word reply is not evidence of a language change. Saaras happily
+        # labels noisy fragments as Bengali/Gujarati; requiring some substance
+        # stops one bad detection from flipping the whole call.
+        if len(st.transcript) and len((st.transcript[-1].get("text") or "").split()) < 3:
+            return
 
         st.lang_streak += 1
         if st.lang_streak < 2:
@@ -180,45 +201,15 @@ class TranscriptTap(FrameProcessor):
         task = self._task_ref.get("task")
         if task:
             await task.queue_frame(
-                TTSUpdateSettingsFrame(settings={"language": new, "voice": voice})
+                TTSUpdateSettingsFrame(
+                    settings={"language": LANG_ENUM.get(new, Language.HI_IN), "voice": voice}
+                )
             )
         self._convex.lang_switch(st.call_id, old, new, 0.9)
         self._convex.turn(st.call_id, "system", f"Language switched {old} → {new}")
         st.language = new
         st.switched.append(new)
         st.lang_streak = 0
-
-
-class AgentTap(FrameProcessor):
-    """
-    Captures what the agent actually says.
-
-    Sits after the LLM and accumulates LLMTextFrame chunks, flushing one
-    complete utterance per LLMFullResponseEndFrame. Per-chunk would write a
-    Convex row per token; reading from TTS would miss anything TTS dropped.
-    """
-
-    def __init__(self, state: CallState, convex: ConvexClient):
-        super().__init__()
-        self._state = state
-        self._convex = convex
-        self._buf: list[str] = []
-
-    async def process_frame(self, frame: Frame, direction: FrameDirection):
-        await super().process_frame(frame, direction)
-
-        if isinstance(frame, LLMTextFrame) and frame.text:
-            self._buf.append(frame.text)
-        elif isinstance(frame, LLMFullResponseEndFrame):
-            text = "".join(self._buf).strip()
-            self._buf.clear()
-            if text:
-                st = self._state
-                self._convex.turn(st.call_id, "agent", text)
-                st.transcript.append({"seq": st.turn_seq, "role": "agent", "text": text})
-                st.turn_seq += 1
-
-        await self.push_frame(frame, direction)
 
 
 def build_pipeline(
@@ -238,14 +229,29 @@ def build_pipeline(
     # ── STT ─────────────────────────────────────────────────────────────────
     stt = SarvamSTTService(
         api_key=api_key,
-        model="saaras:v3",
         mode=os.getenv("STT_MODE", "transcribe"),  # transcribe wins on numerals
-        sample_rate=int(os.getenv("STT_SAMPLE_RATE", "16000")),  # NOT 8000 — see header
-        input_audio_codec="pcm_s16le",
+        # Must MATCH the transport's 8000. Setting 16000 here (to halve the
+        # 512-sample VAD frame) starves the VAD: audio arrives at the wrong
+        # rate, speech is never detected, and the agent goes deaf while
+        # everything logs clean. We keep the latency win via
+        # negative_frames_count instead: 6 x 64ms = 384ms, vs 18 x 64 = 1152ms.
+        sample_rate=int(os.getenv("STT_SAMPLE_RATE", "8000")),
+        # NOTE: do NOT set input_audio_codec. Sarvam's raw WS documents
+        # wav|pcm_s16le|pcm_l16|pcm_raw, but Pipecat's AudioData model is a
+        # literal that accepts ONLY 'audio/wav'. Passing pcm_s16le makes every
+        # single audio frame fail validation, so the agent talks and hears
+        # nothing — a call that looks fine and is completely deaf.
         keepalive_interval=5.0,  # Sarvam closes idle sockets at 60s
         settings=SarvamSTTSettings(
+            model="saaras:v3",   # belongs in settings; the ctor arg is deprecated
             language="unknown",  # ← this is what turns auto-detection ON
-            vad_signals=True,
+            # OFF. With vad_signals on, Sarvam emits START_SPEECH and the
+            # Pipecat STT service turns that into a broadcast interruption,
+            # which cancels in-flight TTS — even with allow_interruptions=False
+            # on PipelineParams. The callee's "hello" on pickup then kills the
+            # greeting and they hear pure silence. Transcripts still arrive
+            # normally without these events; only barge-in is lost.
+            vad_signals=False,
             high_vad_sensitivity=False,  # the demo hall is loud
             negative_frames_count=int(os.getenv("STT_NEG_FRAMES", "6")),  # default 18
             negative_frames_window=int(os.getenv("STT_NEG_WINDOW", "8")),  # default 24
@@ -253,33 +259,28 @@ def build_pipeline(
             first_turn_min_speech_frames=4,  # they answer fast
             positive_speech_threshold=0.6,
             negative_speech_threshold=0.45,
-            # Bias the recogniser toward the words we cannot afford to lose.
-            prompt=f"hazaar lakh rupaye GST delivery warranty {category} {must_haves}".strip(),
-        ),
-    )
-
-    # ── LLM ─────────────────────────────────────────────────────────────────
-    llm = SarvamLLMService(
-        api_key=api_key,
-        settings=SarvamLLMSettings(
-            model=os.getenv("LLM_MODEL", "sarvam-30b"),
-            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "100")),
-            temperature=0.4,
-            reasoning_effort=None,  # ← MANDATORY. See the header. Never remove.
+            # NOTE: no `prompt=`. saaras:v3 rejects it outright with
+            # "Model 'saaras:v3' does not support prompt parameter." The
+            # recogniser-biasing trick only works on other Sarvam STT models.
         ),
     )
 
     # ── TTS ─────────────────────────────────────────────────────────────────
     tts = SarvamTTSService(
         api_key=api_key,
-        model="bulbul:v3",
         voice_id=voice,
         sample_rate=8000,  # the phone leg is 8k; Pipecat resamples for us
         settings=SarvamTTSSettings(
-            language=language,
+            model="bulbul:v3",
+            language=LANG_ENUM.get(language, Language.HI_IN),  # enum, NOT a string
             pace=1.0,
             enable_preprocessing=True,  # speaks prices as words, not digits
-            min_buffer_size=int(os.getenv("TTS_MIN_BUFFER", "25")),  # faster first byte
+            # min_buffer_size has an undocumented VALID RANGE. Probed live:
+            # 50/100/150/200 accepted; 25 and 500+ rejected with 422
+            # "Input parameters has to be a valid dictionary", which kills the
+            # whole config and leaves the callee in silence. Pipecat's default
+            # of 50 is valid, so leave it alone — do NOT set 25 for "faster
+            # first byte" as the spec originally suggested.
         ),
     )
 
@@ -297,24 +298,43 @@ def build_pipeline(
         learned_prefs=brief.get("learnedPrefs", []),
     )
 
-    context = LLMContext([{"role": "system", "content": system_prompt}])
-    aggregators = LLMContextAggregatorPair(context)
+    # ── We drive the conversation loop ourselves. ───────────────────────
+    #
+    # Pipecat's LLMContextAggregatorPair owns turn-taking, and on a real phone
+    # line it would not hand us a completed turn:
+    #   * default TurnAnalyzerUserTurnStopStrategy is a smart-turn MODEL that
+    #     kept judging short replies ("hello", "haan", "पूछो") as unfinished,
+    #     so the LLM was never invoked once across ~8 live calls;
+    #   * swapping to SpeechTimeoutUserTurnStopStrategy stopped triggering at
+    #     all;
+    #   * the mute-strategy routes either under-fired (pipecat#3986) or muted
+    #     the user permanently.
+    #
+    # A phone negotiation does not need adaptive turn inference. It needs:
+    # they said something -> we answer. That is ~40 lines, fully deterministic,
+    # and it lets US decide how to handle short answers, ramblers and people
+    # who talk over us — rather than hoping a model guesses right. The callee
+    # should never have to adapt to the agent.
+    #
+    # Pipecat keeps doing what it is genuinely good at: transport, the Twilio
+    # serializer, STT and TTS streaming.
+    conversation = ConversationDriver(
+        state=state,
+        convex=convex,
+        system_prompt=system_prompt,
+        api_key=api_key,
+    )
 
     task_ref: dict[str, Any] = {}
-    tap = TranscriptTap(state, convex, task_ref)
-    agent_tap = AgentTap(state, convex)
+    tap = TranscriptTap(state, convex, task_ref, conversation)
 
     pipeline = Pipeline(
         [
             transport.input(),
             stt,
-            tap,           # vendor side + the two reflexes + language switching
-            aggregators.user(),
-            llm,
-            agent_tap,     # agent side
+            tap,   # vendor side, the reflexes, language switching, and the LLM loop
             tts,
             transport.output(),
-            aggregators.assistant(),
         ]
     )
 
@@ -323,7 +343,10 @@ def build_pipeline(
         params=PipelineParams(
             audio_in_sample_rate=8000,
             audio_out_sample_rate=8000,
-            allow_interruptions=os.getenv("ALLOW_INTERRUPTIONS", "true").lower() == "true",
+            # Deprecated in pipecat >=0.0.99 and ignored in 1.6.0. Real
+            # barge-in control is the user_mute_strategies above. Left here
+            # only so nobody "helpfully" adds it back.
+            allow_interruptions=False,
         ),
     )
     task_ref["task"] = task
@@ -356,6 +379,7 @@ def build_pipeline(
     @transport.event_handler("on_client_disconnected")
     async def _on_disconnect(_transport, _client):
         logger.info(f"[{state.call_id}] disconnected")
+        await conversation.aclose()
         await task.cancel()
 
     return task

@@ -24,16 +24,18 @@ MissionType = Literal["availability", "quote", "negotiate"]
 # Order matters: buyer intent FIRST (keeps them on the line), disclosure
 # SECOND, consent question THIRD.
 
+# KEEP THIS SHORT. Measured on a real call: the original three-sentence version
+# ran ~15 seconds and the callee hung up at 10s, before it even finished. Every
+# second here is a second a stranger is waiting to find out why you rang.
+# Still carries all three obligations: AI disclosure, recording notice, consent.
 DISCLOSURE = {
     "hi-IN": (
-        "नमस्ते! मैं {name} जी की तरफ़ से बात कर रहा हूँ — उन्हें {ask} चाहिए। "
-        "एक बात पहले बता दूँ, मैं एक AI असिस्टेंट हूँ और यह कॉल रिकॉर्ड हो रही है। "
-        "क्या मैं आगे बात करूँ?"
+        "नमस्ते! मैं {name} जी का AI असिस्टेंट हूँ, कॉल रिकॉर्ड हो रही है। "
+        "उन्हें {ask} चाहिए — दो बातें पूछ लूँ?"
     ),
     "en-IN": (
-        "Hello! I'm calling on behalf of {name} — they're looking for {ask}. "
-        "Quick heads-up: I'm an AI assistant, and this call is being recorded. "
-        "Is it alright if I continue?"
+        "Hello! I'm {name}'s AI assistant, and this call is recorded. "
+        "They need {ask} — may I ask you two quick questions?"
     ),
 }
 

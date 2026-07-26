@@ -27,6 +27,8 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from loguru import logger
 from twilio.rest import Client as TwilioClient
 
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.transports.websocket.fastapi import (
@@ -146,7 +148,7 @@ async def place_call(
             from_=from_number,
             twiml=twiml,
             record=True,  # free, and it is your demo fallback footage
-            timeout=12,  # ring budget, then move on to the next vendor
+            timeout=int(os.getenv("RING_TIMEOUT_SEC", "12")),  # then move to the next vendor
             **(
                 {
                     "status_callback": status_cb,
@@ -234,6 +236,22 @@ async def media_stream(ws: WebSocket) -> None:
             add_wav_header=False,
             serializer=serializer,
             session_timeout=MAX_CALL_SECONDS,
+            # Transport-level VAD is NOT optional here.
+            #
+            # Without it Pipecat has no real notion of when the user starts and
+            # stops speaking, so turn-taking falls back to transcription
+            # arrival — which fires ~30ms after we begin generating TTS and
+            # cancels our own greeting before a byte leaves. Wiring Silero is
+            # what makes the user-mute strategies actually able to see "the
+            # bot is speaking".
+            vad_analyzer=SileroVADAnalyzer(
+                params=VADParams(
+                    confidence=0.7,
+                    start_secs=0.2,
+                    stop_secs=0.6,   # phone pauses are longer than desktop
+                    min_volume=0.6,
+                )
+            ),
         ),
     )
 
