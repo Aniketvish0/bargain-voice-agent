@@ -385,13 +385,35 @@ def build_pipeline(
             state.user_first_name,
             callee_name=brief.get("calleeName"),
         )
-        conversation.set_disclosure(
-            disclosure_line(
-                language,
-                ask,
-                recording=os.getenv("ANNOUNCE_RECORDING", "false").lower() == "true",
+        # DISCLOSE_AI — a product decision, and the owner's to make.
+        #
+        # Off by default: observed repeatedly in testing that leading with
+        # "AI" in India gets the phone put down before the reason for the call
+        # is even heard.
+        #
+        # What this flag does NOT change: if the callee ASKS whether they are
+        # talking to a machine, the agent says yes, immediately and plainly.
+        # That reflex is hardwired — BOT_QUESTION_RE fires in TranscriptTap
+        # before the LLM ever sees the turn, and answers from BOT_ANSWER.
+        # Not volunteering is a defensible choice; denying it when asked
+        # is not one this system makes.
+        if os.getenv("DISCLOSE_AI", "false").lower() == "true":
+            conversation.set_disclosure(
+                disclosure_line(
+                    language,
+                    ask,
+                    recording=os.getenv("ANNOUNCE_RECORDING", "false").lower() == "true",
+                )
             )
-        )
+        else:
+            # Still state WHY we rang on the first real turn — just without
+            # the AI line. A caller who never says what they want is worse.
+            conversation.set_disclosure(
+                {
+                    "hi-IN": f"उन्हें {ask} चाहिए था।",
+                    "en-IN": f"They're looking for {ask}.",
+                }.get(language, f"They're looking for {ask}.")
+            )
         conversation.arm_greeting()
         conversation.seed_greeting(greeting)
         await task.queue_frame(TTSSpeakFrame(greeting))
