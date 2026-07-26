@@ -31,7 +31,6 @@ export default function Hero() {
           <a href="#console" className="btn ghost">
             WATCH IT NEGOTIATE →
           </a>
-          <span className="note">Zero calls made by you.</span>
         </div>
       </div>
 
