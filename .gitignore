@@ -1,0 +1,34 @@
+# Secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Recordings / scratch
+recordings/
+*.wav
+*.mp3
+tmp/
+scratch/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+dist/
+build/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
