@@ -1,108 +1,141 @@
 <div align="center">
 
-# 🤝 Doot — the calling envoy that negotiates for you
+# Doot
 
-**You give it one goal. It calls ten places at once, haggles each one down in their own language, and brings back the best deal — while you do something else.**
+**The calling envoy that negotiates for you.**
 
-*दूत (doot) = envoy / messenger — someone you send to speak on your behalf.*
+You give it one goal. It calls ten places at once, haggles each one down in their own language, and brings back the best deal while you do something else.
 
-Built on [Sarvam AI](https://www.sarvam.ai/) · Voice-first · Human-in-the-loop via Telegram
+[![Built with Sarvam AI](https://img.shields.io/badge/Built%20with-Sarvam%20AI-FF6B00?style=flat-square)](https://www.sarvam.ai/)
+[![Backend: Convex](https://img.shields.io/badge/Backend-Convex-EE342F?style=flat-square)](https://www.convex.dev/)
+[![Interface: Telegram](https://img.shields.io/badge/Interface-Telegram-229ED9?style=flat-square)](https://core.telegram.org/bots)
+[![License: MIT](https://img.shields.io/badge/License-MIT-111111?style=flat-square)](LICENSE)
+[![Status](https://img.shields.io/badge/Status-Hackathon%20Build-2B6CB0?style=flat-square)](docs/ROADMAP.md)
 
 </div>
 
 ---
 
-## The one-line pitch
+## Overview
 
-> Getting a real answer out of the offline world still means **you, on the phone, one call at a time, in a language you half-speak.** Doot makes all those calls in parallel, negotiates on every one of them, and pulls you in only at the two moments that actually need a human.
+Getting one real answer out of the offline world still means you, on the phone, one call at a time, in a language you half speak. Doot removes that entirely. You send a goal and a budget over Telegram. Doot places several outbound calls in parallel, holds a natural conversation with each business in their own language, negotiates on price, and returns a single ranked deal sheet. You approve, it books.
 
-## The thing no human and no competitor can do
+The name comes from *doot* (दूत), an envoy sent to speak on your behalf.
 
-Doot calls **N places simultaneously** and holds every quote **live**. So it does what you physically can't:
+## The core idea
 
-> 🎯 **Parallel competitive leverage** — *"The place down the road just quoted me ₹3,200 — can you do better?"*
->
-> You call serially and forget quote #1 by the time you reach #4. Doot plays all of them against each other **in real time**, driving every price down at once.
+Doot calls N places at the same time and keeps every quote live. That lets it do the one thing a person on a phone cannot:
 
-Google Duplex made *one* restaurant call, in US English, and never shipped in India. The honest competitor here is **you, with your thumb and 40 minutes**.
+> **Parallel competitive leverage.** While still on the line with one business, Doot references the best competing quote it is holding from another live call. "The place nearby is offering 3,600. Can you do better?" You call serially and forget the first quote by the fourth call. Doot runs the whole set as a live auction and drives every price down at once.
+
+This single mechanic is the product. Everything else supports it.
+
+## Screenshots
+
+> Screenshots and a demo recording will be added here.
+
+<div align="center">
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/assets/telegram-goal.png" alt="Sending a goal to Doot on Telegram" width="380"/><br/><sub>1. Send a goal, approve the plan</sub></td>
+    <td align="center"><img src="docs/assets/live-calls.png" alt="Live parallel calls with negotiation" width="380"/><br/><sub>2. Parallel calls negotiating live</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/assets/deal-sheet.png" alt="Ranked deal sheet returned on Telegram" width="380"/><br/><sub>3. Ranked deal sheet</sub></td>
+    <td align="center"><img src="docs/assets/booking.png" alt="Confirmed booking with confirmation number" width="380"/><br/><sub>4. Booked, with confirmation number</sub></td>
+  </tr>
+</table>
+
+</div>
 
 ## How it works
 
-```
-   You (Telegram)                    Doot                         The offline world
-        │                             │                                  │
-        │  "Find me a room in Jaipur, │                                  │
-        │   2 people, under ₹4k,      │                                  │
-        │   near old city" 🎤 ───────▶│                                  │
-        │                             │  parses goal + budget            │
-        │  ◀── plan + 5 places ───────│                                  │
-        │  ✅ Approve  (Checkpoint A) │                                  │
-        │                             │── calls 5 hotels in parallel ───▶│ 🏨🏨🏨🏨🏨
-        │                             │   negotiates each in Hindi       │
-        │                             │   uses quote #3 vs quote #1      │
-        │  ◀── "Hotel B: breakfast    │                                  │
-        │      +₹500?" (Checkpoint B) │                                  │
-        │  ✅ Yes ───────────────────▶│  resumes that call seamlessly    │
-        │                             │                                  │
-        │  ◀── ranked deals + 🎧 ─────│  best negotiated price each      │
-        │  ✅ Book Hotel B (Checkpt C)│                                  │
-        │                             │── calls back, confirms, books ──▶│ 🏨✔
-        │  ◀── confirmation #A4821 ───│                                  │
+```mermaid
+flowchart LR
+    U["You on Telegram<br/>text or voice note"] --> ORC["Orchestrator<br/>Sarvam-M"]
+    ORC -->|"approve plan"| U
+    ORC --> Q["Parallel call workers"]
+    Q --> C1["Call 1"]
+    Q --> C2["Call 2"]
+    Q --> C3["Call N"]
+    C1 --> V["Sarvam voice loop<br/>Saarika STT, Sarvam-M, Bulbul TTS"]
+    C2 --> V
+    C3 --> V
+    V -->|"live quotes"| QB[("Quote board")]
+    QB -->|"competitive leverage"| V
+    V --> DB[("Convex<br/>calls, quotes, bookings")]
+    ORC -->|"ranked deals"| U
+    U -->|"pick winner"| ORC
+    ORC -->|"confirm and book"| DB
 ```
 
-You made **zero calls**.
+The result: you make zero calls, and the wall clock is roughly the length of a single call, not the sum of all of them.
 
-## Human-in-the-loop, done right
+## Human in the loop
 
-Not fully autonomous (scary), not babysitting every call (pointless) — **three checkpoints**:
+Doot is neither fully autonomous nor something you babysit. It stops at three points only.
 
-| | Checkpoint | What you do |
-|---|---|---|
-| **A** | Before dialing | Approve the plan: who Doot calls, what it asks, your budget & walk-away price |
-| **B** | Mid-call escalation | A callee asks something off-policy → Doot pauses *that one call*, pings you Yes/No, resumes |
-| **C** | Closing | You pick the winner; Doot books it (or hands you the final personal step — payment/ID) |
+| Point | When | What you do |
+| :--- | :--- | :--- |
+| A | Before dialing | Approve the plan: who it calls, what it asks, the target and walk-away price |
+| B | Mid call | A business asks something outside policy. Doot pauses that one call, sends you a yes or no, then resumes |
+| C | Closing | You pick the winner. Doot books it, or hands you the final personal step such as payment or ID |
 
-## Powered by Sarvam AI
+## Built on Sarvam AI
 
-**Selected capability: Voice Experience** — the product lives or dies on holding a real, code-switched, noisy phone call *and negotiating on it*.
+Selected capability: **Voice Experience**. The product depends on holding a real, code-mixed, noisy phone call and negotiating on it.
 
 | Component | Role |
-|---|---|
-| **Saarika** (streaming ASR) | Transcribes the callee — accents, Hindi-English code-switch, shop noise, corrections |
-| **Bulbul** (TTS) | Doot's voice — firm when anchoring a price, warm when closing, "ek minute" on a pause |
-| **Sarvam-M** (LLM) | The negotiation brain, slot-filling, cross-call leverage, ranking, Telegram reasoning |
-| **Saaras** (speech translation) *(stretch)* | Bridges your language ↔ the callee's when they differ |
+| :--- | :--- |
+| Saarika | Streaming speech to text for the business side. Handles accents, Hindi and English code switching, background noise, and corrections |
+| Bulbul | Doot's own voice. Firm when anchoring a price, warm when closing, deliberate on numbers |
+| Sarvam-M | The negotiation brain, slot filling, cross call leverage, ranking, and Telegram reasoning |
+| Saaras | Optional. Bridges your language and the business language when they differ |
+
+## Tech stack
+
+| Layer | Choice |
+| :--- | :--- |
+| Interface | Telegram Bot API |
+| Orchestration and workers | Node or Python service with a bounded parallel call pool |
+| Voice | Sarvam Saarika, Bulbul, and Sarvam-M over streaming APIs |
+| Telephony | Twilio Media Streams for the phone line and real time audio. Samvaad by Sarvam is the managed upgrade path |
+| Data | Convex for durable state, functions, and the live quote board |
 
 ## Documentation
 
-| Doc | What's inside |
-|---|---|
-| [`docs/PRD.md`](docs/PRD.md) | Product requirements — problem, user, JTBD, features, rubric mapping |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System design, per-call voice loop, concurrency, stack, latency budget |
-| [`docs/BARGAINING.md`](docs/BARGAINING.md) | **The negotiation engine** — strategy, cross-call leverage, walk-away logic |
-| [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) | Postgres schema, state machine, traceability |
-| [`docs/DEMO.md`](docs/DEMO.md) | The 3-minute demo script for judges |
-| [`docs/RUBRIC.md`](docs/RUBRIC.md) | How Doot maps to the Sarvam × GrowthX rubric, axis by axis |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Hackathon MVP cut, milestones, and what to defer |
+| Document | Contents |
+| :--- | :--- |
+| [docs/PRD.md](docs/PRD.md) | Problem, user, job to be done, features, Sarvam usage |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, per call voice loop, concurrency, latency budget |
+| [docs/BARGAINING.md](docs/BARGAINING.md) | The negotiation engine and parallel competitive leverage |
+| [docs/DATA_MODEL.md](docs/DATA_MODEL.md) | Data model, state machine, traceability |
+| [docs/DEMO.md](docs/DEMO.md) | The three minute demo script |
+| [docs/RUBRIC.md](docs/RUBRIC.md) | Mapping to the Sarvam and GrowthX judging rubric |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Build order, milestones, and what to cut |
 
 ## Quickstart
 
 ```bash
 git clone https://github.com/Aniketvish0/bargain-voice-agent.git
 cd bargain-voice-agent
-cp .env.example .env        # fill in Sarvam, Telegram, and telephony keys
-# see docs/ARCHITECTURE.md §"Suggested stack" for the service layout
+npm install
+cp .env.example .env            # Sarvam, Telegram, and telephony keys
+npx convex dev                  # sync the Convex backend
 ```
 
-> ⚠️ **Critical path before you build anything:** confirm whether Sarvam ships a bundled telephony / voice-agent runtime (check the Sarvam Docs). If it does, use it and skip the media-bridge glue. If not, wire Exotel/Plivo/Twilio media streams to Sarvam's streaming ASR/TTS. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+The Convex backend is already provisioned. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the service layout, and [docs/ROADMAP.md](docs/ROADMAP.md) for the recommended build order. The critical path to verify first is telephony.
 
-## Trust & consent (built in, not bolted on)
+## Trust and consent
 
-- **AI disclosure** in the first line of every call, on behalf of a named user
-- **Do-not-call** honoured and logged
-- **Signed recording + transcript** for every call — so "did Doot really get that price?" is *provable*
-- **No autonomous payment, no giving out your ID** — those are always yours to approve (Checkpoint C)
+Trust is designed in, not added later.
+
+- Every call opens by disclosing that it is an AI assistant calling on behalf of a named person.
+- Do not call requests are honored and logged.
+- Every call keeps a signed recording and transcript, so any quoted price is provable rather than claimed.
+- Payment and identity steps are never automated. They always route back to you.
 
 ## License
 
-[MIT](LICENSE)
+Released under the [MIT License](LICENSE).
