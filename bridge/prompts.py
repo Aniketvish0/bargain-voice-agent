@@ -218,16 +218,11 @@ a price from another shop. Negotiate on the merits instead."""
             )
 
     # ── 6. Close artifact + the read-back ───────────────────────────────────
-    readback_example = {
-        "hi-IN": "तो: चौबीस हज़ार पाँच सौ, GST के साथ, मंगलवार डिलीवरी — सही है?",
-        "en-IN": "So that's twenty four thousand five hundred, including GST, delivered Tuesday — correct?",
-    }[_lang_key(language)]
-
     blocks.append(
         f"""BEFORE YOU HANG UP — this matters more than anything else:
 Get (a) the person's name, (b) how long the price or availability holds, (c) confirmation.
-Then read the WHOLE outcome back as ONE clear sentence and ask them to confirm, like:
-  "{readback_example}"
+Then read the WHOLE outcome back as ONE clear sentence and ask them to confirm —
+using the ACTUAL figures from this call. Never speak an example or placeholder.
 Wait for their yes. Then thank them warmly and end the call.
 This read-back is the most important turn of the entire call."""
     )

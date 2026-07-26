@@ -14,18 +14,18 @@
      oklch(0.24), and dropping to near-black is what turns a warm tint into
      mud and collapses the separation between panels.
      nav is recessed, bg is the canvas, surface/2/3 are raised. */
-  --nav: #161514;
-  --bg: #1c1b19;
-  --surface: #232221;
-  --surface-2: #2b2a27;
-  --surface-3: #343230;
-  --border: #34322f;
-  --border-strong: #46443f;
+  --nav: #171716;
+  --bg: #1f1f1e;
+  --surface: #282827;
+  --surface-2: #313130;
+  --surface-3: #3a3a38;
+  --border: #383836;
+  --border-strong: #4d4d4a;
 
   /* text — never pure white */
-  --text: #eceae6;
-  --text-2: #a8a49c;
-  --text-3: #85817a;
+  --text: #eeedeb;
+  --text-2: #aaa9a4;
+  --text-3: #85847f;
 
   /* the one saturated colour */
   --accent: #ff5f33;

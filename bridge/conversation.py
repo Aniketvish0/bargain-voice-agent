@@ -184,6 +184,19 @@ class ConversationDriver:
                 self._awaiting_counter_reply = True
                 step = (0.80, 0.88, 0.94)[self._counters - 1]
                 offer = max(self._target, int(self._best_price * step))
+                # NEVER bid above something they have already offered. The
+                # ladder is computed off their quote, so once they concede the
+                # next rung can land higher than their own latest number —
+                # observed live: they said 5000 and the agent asked for 5280.
+                # If the rung is not an improvement, take their price.
+                if offer >= self._best_price:
+                    self._awaiting_counter_reply = False
+                    self._counters = 3  # ladder exhausted; go and confirm
+                    return "confirm", (
+                        f"They have come down to {self._best_price}, which is as good as "
+                        f"you will get. Accept it warmly, read the whole deal back in ONE "
+                        f"sentence, and ask them to confirm."
+                    )
                 cite = ""
                 if self._prior_quotes:
                     q = min(self._prior_quotes, key=lambda x: x.get("priceInr", 10**9))
@@ -245,6 +258,7 @@ class ConversationDriver:
             return
 
         # Fold in anything they told us, whether or not we asked for it.
+        rejected_price = False
         for k, v in (heard or {}).items():
             if v is None or k not in self._asks:
                 continue
@@ -255,7 +269,14 @@ class ConversationDriver:
             # number in it. A slot may only be filled by a value of its own
             # declared type.
             want = self._types.get(k, "text")
-            if want == "money" or want == "number":
+            if want == "money":
+                # 0 is not a price. It slipped past the sanity band (which only
+                # looks at values > 100) and marked the slot filled, so the
+                # agent stopped asking and confirmed a deal worth nothing.
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
+                    logger.info(f"[{self._state.call_id}] ignoring {k}={v!r} (want money)")
+                    continue
+            elif want == "number":
                 if isinstance(v, bool) or not isinstance(v, (int, float)):
                     logger.info(f"[{self._state.call_id}] ignoring {k}={v!r} (want {want})")
                     continue
@@ -276,13 +297,29 @@ class ConversationDriver:
                         f"{self._target} - treating as misheard, re-asking"
                     )
                     self._asks[k] = max(0, self._asks[k] - 1)
+                    rejected_price = True
                     continue
 
             self._slots[k] = v
             if isinstance(v, (int, float)) and v > 100:
-                self._best_price = int(v)
+                # Keep their BEST (lowest) offer, not the latest. They conceded
+                # 6000 -> 5000, and tracking only the latest made the next
+                # ladder step bid 5280 — above an offer already on the table.
+                self._best_price = (
+                    int(v) if self._best_price is None else min(self._best_price, int(v))
+                )
         if heard:
             logger.info(f"[{self._state.call_id}] goal={goal_kind} slots={self._slots}")
+
+        # The reply was generated in the SAME call that produced the bad number,
+        # so it quotes it back. Rejecting the slot is not enough — we would
+        # still have said "so that's ₹86,000 per night, correct?" out loud.
+        # Replace the whole turn with a plain request to repeat the figure.
+        if rejected_price:
+            reply = {
+                "hi-IN": "माफ़ कीजिए, नंबर ठीक से सुनाई नहीं दिया — rate फिर से बता दीजिए?",
+                "en-IN": "Sorry, I didn't catch that number — could you say the rate again?",
+            }.get(self._reply_lang, "Sorry, could you repeat the rate please?")
 
         if not reply:
             return
